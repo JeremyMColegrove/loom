@@ -4,7 +4,7 @@
   "scopeName": "source.loom",
   "patterns": [
     { "include": "#comment" },
-    { "include": "#prefixed-string" },
+    { "include": "#escaped-string" },
     { "include": "#string" },
     { "include": "#directive" },
     { "include": "#keywords" },
@@ -27,16 +27,10 @@
         }
       ]
     },
-    "prefixed-string": {
+    "escaped-string": {
       "name": "string.quoted.double.prefixed.loom",
-      "begin": "\\bs(\")",
-      "beginCaptures": {
-        "1": { "name": "punctuation.definition.string.begin.loom" }
-      },
-      "end": "(\")",
-      "endCaptures": {
-        "1": { "name": "punctuation.definition.string.end.loom" }
-      },
+      "begin": "\\\\\"",
+      "end": "\"",
       "patterns": [
         {
           "name": "constant.character.escape.loom",

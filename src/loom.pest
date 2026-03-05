@@ -44,7 +44,7 @@ Literal = { StringLiteral | PathLiteral | Number | Boolean }
 Number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 Boolean = { "true" | "false" }
 
-StringLiteral = ${ "s\"" ~ InnerStr ~ "\"" }
+StringLiteral = ${ "\\\"" ~ InnerStr ~ "\"" }
 PathLiteral = ${ "\"" ~ InnerStr ~ "\"" }
 InnerStr = @{ (!"\"" ~ ANY)* }
 

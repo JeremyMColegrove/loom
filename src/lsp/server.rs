@@ -4,6 +4,8 @@ use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
+use crate::ast::{Expression, FlowOrBranch, Program, Source, Span, Statement};
+use crate::formatter::Formatter;
 use crate::parser::parse;
 
 #[derive(Debug)]
@@ -138,6 +140,155 @@ enum CompletionContext {
     MemberAccess,
     StringLiteral,
     General,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SymbolAtPos<'a> {
+    name: &'a str,
+}
+
+fn lsp_range_from_span(span: Span) -> Range {
+    Range {
+        start: Position {
+            line: span.start.line.saturating_sub(1) as u32,
+            character: span.start.col.saturating_sub(1) as u32,
+        },
+        end: Position {
+            line: span.end.line.saturating_sub(1) as u32,
+            character: span.end.col.saturating_sub(1) as u32,
+        },
+    }
+}
+
+fn find_expression_symbol_at_pos<'a>(expr: &'a Expression, pos: Position) -> Option<SymbolAtPos<'a>> {
+    match expr {
+        Expression::FunctionCall(call) => {
+            if call.span.contains_zero_based(pos.line, pos.character) {
+                Some(SymbolAtPos {
+                    name: &call.name,
+                })
+            } else {
+                None
+            }
+        }
+        Expression::Lambda(lambda) => find_expression_symbol_at_pos(&lambda.body, pos),
+        Expression::BinaryOp(left, _, right) => {
+            find_expression_symbol_at_pos(left, pos).or_else(|| find_expression_symbol_at_pos(right, pos))
+        }
+        Expression::UnaryOp(_, inner) => find_expression_symbol_at_pos(inner, pos),
+        _ => None,
+    }
+}
+
+fn find_flow_or_branch_symbol_at_pos<'a>(body: &'a FlowOrBranch, pos: Position) -> Option<SymbolAtPos<'a>> {
+    match body {
+        FlowOrBranch::Flow(flow) => find_pipe_flow_symbol_at_pos(flow, pos),
+        FlowOrBranch::Branch(branch) => find_branch_symbol_at_pos(branch, pos),
+    }
+}
+
+fn find_branch_symbol_at_pos<'a>(branch: &'a crate::ast::Branch, pos: Position) -> Option<SymbolAtPos<'a>> {
+    if !branch.span.contains_zero_based(pos.line, pos.character) {
+        return None;
+    }
+    for item in &branch.items {
+        if let crate::ast::BranchItem::Flow(flow) = item {
+            if let Some(found) = find_pipe_flow_symbol_at_pos(flow, pos) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+fn find_pipe_flow_symbol_at_pos<'a>(flow: &'a crate::ast::PipeFlow, pos: Position) -> Option<SymbolAtPos<'a>> {
+    if !flow.span.contains_zero_based(pos.line, pos.character) {
+        return None;
+    }
+
+    if let Some(found) = find_source_symbol_at_pos(&flow.source, pos) {
+        return Some(found);
+    }
+
+    for (_, dest) in &flow.operations {
+        if let Some(found) = find_destination_symbol_at_pos(dest, pos) {
+            return Some(found);
+        }
+    }
+
+    if let Some(on_fail) = &flow.on_fail {
+        if on_fail.span.contains_zero_based(pos.line, pos.character) {
+            if let Some(found) = find_flow_or_branch_symbol_at_pos(&on_fail.handler, pos) {
+                return Some(found);
+            }
+        }
+    }
+
+    None
+}
+
+fn find_source_symbol_at_pos<'a>(source: &'a Source, pos: Position) -> Option<SymbolAtPos<'a>> {
+    match source {
+        Source::Directive(dir) if dir.span.contains_zero_based(pos.line, pos.character) => Some(SymbolAtPos {
+            name: &dir.name,
+        }),
+        Source::FunctionCall(call) if call.span.contains_zero_based(pos.line, pos.character) => {
+            Some(SymbolAtPos {
+                name: &call.name,
+            })
+        }
+        Source::Expression(expr) => find_expression_symbol_at_pos(expr, pos),
+        _ => None,
+    }
+}
+
+fn find_destination_symbol_at_pos<'a>(dest: &'a crate::ast::Destination, pos: Position) -> Option<SymbolAtPos<'a>> {
+    match dest {
+        crate::ast::Destination::Directive(dir)
+            if dir.span.contains_zero_based(pos.line, pos.character) =>
+        {
+            Some(SymbolAtPos {
+                name: &dir.name,
+            })
+        }
+        crate::ast::Destination::FunctionCall(call)
+            if call.span.contains_zero_based(pos.line, pos.character) =>
+        {
+            Some(SymbolAtPos {
+                name: &call.name,
+            })
+        }
+        crate::ast::Destination::Branch(branch) => find_branch_symbol_at_pos(branch, pos),
+        crate::ast::Destination::Expression(expr) => find_expression_symbol_at_pos(expr, pos),
+        _ => None,
+    }
+}
+
+fn find_symbol_at_position<'a>(program: &'a Program, pos: Position) -> Option<SymbolAtPos<'a>> {
+    for stmt in &program.statements {
+        match stmt {
+            Statement::Import(imp) if imp.span.contains_zero_based(pos.line, pos.character) => {
+                return Some(SymbolAtPos {
+                    name: &imp.path,
+                });
+            }
+            Statement::Function(func) if func.span.contains_zero_based(pos.line, pos.character) => {
+                if let Some(found) = find_flow_or_branch_symbol_at_pos(&func.body, pos) {
+                    return Some(found);
+                }
+                return Some(SymbolAtPos {
+                    name: &func.name,
+                });
+            }
+            Statement::Pipe(flow) if flow.span.contains_zero_based(pos.line, pos.character) => {
+                if let Some(found) = find_pipe_flow_symbol_at_pos(flow, pos) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Returns `(prefix, content_start_column)` where `content_start_column` is the
@@ -514,6 +665,7 @@ impl LanguageServer for Backend {
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             ..Default::default()
@@ -586,12 +738,39 @@ impl LanguageServer for Backend {
             .remove(&params.text_document.uri.to_string());
     }
 
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let text = match self.documents.read().await.get(&uri.to_string()).cloned() {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+
+        let program = match parse(&text) {
+            Ok(program) => program,
+            Err(_) => return Ok(None),
+        };
+        let formatted = Formatter::format(&program);
+        let edit = TextEdit {
+            range: full_document_range(&text),
+            new_text: formatted,
+        };
+        Ok(Some(vec![edit]))
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
 
         if let Some(text) = self.documents.read().await.get(&uri.to_string()) {
-            let mut word = get_word_at_position(text, position.line, position.character);
+            let mut word = if let Ok(program) = parse(text) {
+                if let Some(symbol) = find_symbol_at_position(&program, position) {
+                    symbol.name.to_string()
+                } else {
+                    get_word_at_position(text, position.line, position.character)
+                }
+            } else {
+                get_word_at_position(text, position.line, position.character)
+            };
             if word.starts_with('@') {
                 word = word[1..].to_string();
             }
@@ -647,7 +826,11 @@ impl LanguageServer for Backend {
             let doc_path = uri.to_file_path().unwrap_or_default();
             let base_dir = doc_path.parent().unwrap_or_else(|| std::path::Path::new(""));
 
-            let word = get_word_at_position(text, position.line, position.character);
+            let parsed = parse(text).ok();
+            let word = parsed
+                .as_ref()
+                .and_then(|program| find_symbol_at_position(program, position).map(|s| s.name.to_string()))
+                .unwrap_or_else(|| get_word_at_position(text, position.line, position.character));
             
             // Check if word is of the form `module.function`
             if word.contains('.') {
@@ -657,7 +840,7 @@ impl LanguageServer for Backend {
                     let mut resolved_module = module_name.to_string();
 
                     // Resolve aliases via AST
-                    if let Ok(program) = crate::parser::parse(text) {
+                    if let Some(program) = parsed {
                         for stmt in program.statements {
                             if let crate::ast::Statement::Import(imp) = stmt {
                                 if imp.alias.as_deref() == Some(module_name) {
@@ -668,11 +851,11 @@ impl LanguageServer for Backend {
                                     let stem = stem.split('.').last().unwrap_or(&imp.path);
                                     if stem == module_name {
                                         resolved_module = imp.path;
-                                        break;
-                                    }
+                                    break;
                                 }
                             }
                         }
+                    }
                     }
                     
                     let module_path = resolved_module.replace('.', "/");
@@ -696,7 +879,7 @@ impl LanguageServer for Backend {
                             if let Ok(target_uri) = Url::from_file_path(&path) {
                                 return Ok(Some(GotoDefinitionResponse::Scalar(Location {
                                     uri: target_uri,
-                                    range: Range::default(), // Point to top of file
+                                    range: Range::default(),
                                 })));
                             }
                         }
@@ -889,13 +1072,14 @@ impl LanguageServer for Backend {
 
         for stmt in &program.statements {
             match stmt {
+                crate::ast::Statement::Comment(_) => {}
                 crate::ast::Statement::Import(imp) => {
                     let label = if let Some(alias) = &imp.alias {
                         format!("@import \"{}\" as {}", imp.path, alias)
                     } else {
                         format!("@import \"{}\"", imp.path)
                     };
-                    let range = find_token_range(&text, &format!("@import \"{}\" ", imp.path));
+                    let range = lsp_range_from_span(imp.span);
                     #[allow(deprecated)]
                     symbols.push(DocumentSymbol {
                         name: label,
@@ -911,7 +1095,7 @@ impl LanguageServer for Backend {
                 crate::ast::Statement::Function(func) => {
                     let params_str = func.parameters.join(", ");
                     let label = format!("{}({})", func.name, params_str);
-                    let range = find_token_range(&text, &func.name);
+                    let range = lsp_range_from_span(func.span);
                     #[allow(deprecated)]
                     symbols.push(DocumentSymbol {
                         name: label,
@@ -938,12 +1122,7 @@ impl LanguageServer for Backend {
                             format!("{:?}", expr).chars().take(40).collect()
                         }
                     };
-                    let token = match &flow.source {
-                        crate::ast::Source::Directive(dir) => format!("@{}", dir.name),
-                        crate::ast::Source::FunctionCall(call) => call.name.clone(),
-                        _ => label.clone(),
-                    };
-                    let range = find_token_range(&text, &token);
+                    let range = lsp_range_from_span(flow.span);
                     #[allow(deprecated)]
                     symbols.push(DocumentSymbol {
                         name: label,
@@ -963,19 +1142,25 @@ impl LanguageServer for Backend {
     }
 }
 
-fn find_token_range(text: &str, token: &str) -> Range {
-    if let Some(idx) = text.find(token) {
-        let prefix = &text[..idx];
-        let line = prefix.chars().filter(|c| *c == '\n').count() as u32;
-        let last_nl = prefix.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col = prefix[last_nl..].chars().count() as u32;
-        let end_col = col + token.chars().count() as u32;
-        Range {
-            start: Position { line, character: col },
-            end: Position { line, character: end_col },
+fn full_document_range(text: &str) -> Range {
+    let mut line: u32 = 0;
+    let mut character: u32 = 0;
+
+    for ch in text.chars() {
+        if ch == '\n' {
+            line += 1;
+            character = 0;
+        } else {
+            character += 1;
         }
-    } else {
-        Range::default()
+    }
+
+    Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position { line, character },
     }
 }
 
@@ -996,8 +1181,10 @@ fn validate_program(program: &crate::ast::Program, text: &str) -> Vec<Diagnostic
             match &func.body {
                 crate::ast::FlowOrBranch::Flow(flow) => validate_pipe_flow(flow, text, &defined_funcs, &mut diagnostics),
                 crate::ast::FlowOrBranch::Branch(branch) => {
-                    for f in &branch.flows {
-                        validate_pipe_flow(f, text, &defined_funcs, &mut diagnostics);
+                    for item in &branch.items {
+                        if let crate::ast::BranchItem::Flow(f) = item {
+                            validate_pipe_flow(f, text, &defined_funcs, &mut diagnostics);
+                        }
                     }
                 }
             }
@@ -1013,7 +1200,7 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
             if !DIRECTIVES.iter().any(|d| d.name == dir.name) {
                 let token = format!("@{}", dir.name);
                 diagnostics.push(Diagnostic {
-                    range: find_token_range(text, &token),
+                    range: lsp_range_from_span(dir.span),
                     severity: Some(DiagnosticSeverity::ERROR),
                     message: format!("Unknown directive: {}", token),
                     source: Some("loom".to_string()),
@@ -1030,7 +1217,7 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
                 if !DIRECTIVES.iter().any(|d| d.name == dir.name) {
                     let token = format!("@{}", dir.name);
                     diagnostics.push(Diagnostic {
-                        range: find_token_range(text, &token),
+                        range: lsp_range_from_span(dir.span),
                         severity: Some(DiagnosticSeverity::ERROR),
                         message: format!("Unknown directive: {}", token),
                         source: Some("loom".to_string()),
@@ -1041,7 +1228,7 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
             crate::ast::Destination::FunctionCall(call) => {
                 if !call.name.contains('.') && !defined_funcs.contains(&call.name) && !BUILTIN_FUNCTIONS.iter().any(|(name, _, _)| *name == &call.name) {
                     diagnostics.push(Diagnostic {
-                        range: find_token_range(text, &call.name),
+                        range: lsp_range_from_span(call.span),
                         severity: Some(DiagnosticSeverity::WARNING),
                         message: format!("Unknown function: {}", call.name),
                         source: Some("loom".to_string()),
@@ -1050,8 +1237,10 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
                 }
             }
             crate::ast::Destination::Branch(branch) => {
-                for f in &branch.flows {
-                    validate_pipe_flow(f, text, defined_funcs, diagnostics);
+                for item in &branch.items {
+                    if let crate::ast::BranchItem::Flow(f) = item {
+                        validate_pipe_flow(f, text, defined_funcs, diagnostics);
+                    }
                 }
             }
             _ => {}
@@ -1062,8 +1251,10 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
         match fail.handler.as_ref() {
             crate::ast::FlowOrBranch::Flow(f) => validate_pipe_flow(f, text, defined_funcs, diagnostics),
             crate::ast::FlowOrBranch::Branch(b) => {
-                for f in &b.flows {
-                    validate_pipe_flow(f, text, defined_funcs, diagnostics);
+                for item in &b.items {
+                    if let crate::ast::BranchItem::Flow(f) = item {
+                        validate_pipe_flow(f, text, defined_funcs, diagnostics);
+                    }
                 }
             }
         }
