@@ -1,24 +1,19 @@
-pub mod env;
 pub mod builtins;
-pub mod fs;
-mod eval;
-mod pipeline;
-mod imports;
-mod functions;
 mod directives;
+pub mod env;
+mod eval;
+pub mod fs;
+mod functions;
+mod imports;
+mod pipeline;
 mod watch;
 
-
 use crate::ast::*;
-use crate::runtime::env::Value;
 use crate::runtime::builtins::BuiltinRegistry;
+use crate::runtime::env::Value;
 use crate::runtime::fs::{AtomicContext, AtomicTransaction};
-use crate::parser;
+use log::debug;
 use std::collections::HashSet;
-
-use std::path::Path;
-use std::time::{Duration, SystemTime};
-use tokio::time::sleep;
 
 pub struct Runtime {
     pub env: env::Environment,
@@ -29,12 +24,14 @@ pub struct Runtime {
     atomic_context: Option<AtomicContext>,
     atomic_txn: Option<AtomicTransaction>,
     callable_sinks: HashSet<String>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl Runtime {
     pub fn new() -> Self {
         let mut env = env::Environment::new();
         env.set("null", Value::Null);
+        let (shutdown_tx, _shutdown_rx) = tokio::sync::watch::channel(false);
         Self {
             env,
             builtins: BuiltinRegistry::new(),
@@ -43,12 +40,25 @@ impl Runtime {
             atomic_context: None,
             atomic_txn: None,
             callable_sinks: HashSet::new(),
+            shutdown_tx,
         }
     }
 
     pub fn with_script_dir(mut self, dir: &str) -> Self {
         self.script_dir = Some(dir.to_string());
         self
+    }
+
+    pub fn request_shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
+    pub fn shutdown_trigger(&self) -> tokio::sync::watch::Sender<bool> {
+        self.shutdown_tx.clone()
+    }
+
+    pub(crate) fn subscribe_shutdown(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.shutdown_tx.subscribe()
     }
 
     pub async fn execute(&mut self, program: &Program) -> Result<(), String> {
@@ -63,13 +73,12 @@ impl Runtime {
                 }
                 Statement::Function(func_def) => {
                     self.env.register_function(func_def.clone());
-                    println!("  🔧 Registered function: {}", func_def.name);
+                    debug!("registered function: {}", func_def.name);
                 }
             }
         }
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -85,7 +94,9 @@ mod tests {
 
         std::fs::write(&input_path, "hello").expect("should write input");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 input_path.to_string_lossy().to_string(),
             ))),
@@ -99,8 +110,14 @@ mod tests {
         };
 
         let mut runtime = Runtime::new();
-        runtime.execute_flow(&flow).await.expect("flow should execute");
-        runtime.execute_flow(&flow).await.expect("flow should execute twice");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute twice");
 
         let output = std::fs::read_to_string(&output_path).expect("should read output");
         assert_eq!(output, "hello\nhello\n");
@@ -115,7 +132,9 @@ mod tests {
         std::fs::write(&input_path, "hello").expect("should write input");
         std::fs::write(&output_path, "existing").expect("should seed output");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 input_path.to_string_lossy().to_string(),
             ))),
@@ -129,7 +148,10 @@ mod tests {
         };
 
         let mut runtime = Runtime::new();
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
 
         let output = std::fs::read_to_string(&output_path).expect("should read output");
         assert_eq!(output, "hello");
@@ -142,21 +164,27 @@ mod tests {
         let target_dir = dir.path().join("archive");
         std::fs::write(&src, "hello").expect("should write input");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 src.to_string_lossy().to_string(),
             ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Expression(Expression::Literal(Literal::Path(
-                    format!("{}/", target_dir.to_string_lossy()),
-                ))),
+                Destination::Expression(Expression::Literal(Literal::Path(format!(
+                    "{}/",
+                    target_dir.to_string_lossy()
+                )))),
             )],
             on_fail: None,
         };
 
         let mut runtime = Runtime::new();
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
 
         let moved = target_dir.join("input.txt");
         assert!(!src.exists(), "source should be moved");
@@ -170,12 +198,15 @@ mod tests {
         let dir = tempdir().expect("tempdir should be created");
         let output_path = dir.path().join("atomic.txt");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::String("hello".to_string()))),
             operations: vec![
                 (
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "atomic".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -189,7 +220,8 @@ mod tests {
                 ),
                 (
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "missing.directive".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -202,7 +234,10 @@ mod tests {
         let mut runtime = Runtime::new();
         let result = runtime.execute_flow(&flow).await;
         assert!(result.is_err(), "flow should fail");
-        assert!(!output_path.exists(), "atomic rollback should remove output");
+        assert!(
+            !output_path.exists(),
+            "atomic rollback should remove output"
+        );
     }
 
     #[tokio::test]
@@ -211,22 +246,29 @@ mod tests {
         let output_path = dir.path().join("fn.txt");
 
         let mut runtime = Runtime::new();
-        runtime.env.register_function(FunctionDef { comments: vec![], span: Span::default(),
+        runtime.env.register_function(FunctionDef {
+            comments: vec![],
+            span: Span::default(),
             name: "identity".to_string(),
             parameters: vec!["input".to_string()],
-            body: FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+            body: FlowOrBranch::Flow(PipeFlow {
+                comments: vec![],
+                span: Span::default(),
                 source: Source::Expression(Expression::Identifier("input".to_string())),
                 operations: vec![],
                 on_fail: None,
             }),
         });
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::String("hello".to_string()))),
             operations: vec![
                 (
                     PipeOp::Safe,
-                    Destination::FunctionCall(FunctionCall { span: Span::default(),
+                    Destination::FunctionCall(FunctionCall {
+                        span: Span::default(),
                         name: "identity".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -242,7 +284,10 @@ mod tests {
             on_fail: None,
         };
 
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
         let output = std::fs::read_to_string(output_path).expect("should read output");
         assert_eq!(output, "hello\n");
     }
@@ -263,7 +308,10 @@ mod tests {
 
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new().with_script_dir(dir.path().to_string_lossy().as_ref());
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let output = std::fs::read_to_string(output_path).expect("should read output");
         assert_eq!(output, "hello\n");
@@ -284,7 +332,10 @@ mod tests {
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new().with_script_dir(dir.path().to_string_lossy().as_ref());
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let output = std::fs::read_to_string(output_path).expect("should read output");
         assert_eq!(output, "ok\n");
@@ -296,7 +347,8 @@ mod tests {
         let watched = dir.path().join("master.txt");
         std::fs::write(&watched, "hello").expect("should create watched file");
 
-        let watch = DirectiveFlow { span: Span::default(),
+        let watch = DirectiveFlow {
+            span: Span::default(),
             name: "watch".to_string(),
             arguments: vec![Expression::Literal(Literal::Path(
                 watched.to_string_lossy().to_string(),
@@ -304,17 +356,17 @@ mod tests {
             alias: Some("event".to_string()),
         };
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Directive(watch.clone()),
-            operations: vec![
-                (
-                    PipeOp::Safe,
-                    Destination::Expression(Expression::MemberAccess(vec![
-                        "event".to_string(),
-                        "type".to_string(),
-                    ])),
-                ),
-            ],
+            operations: vec![(
+                PipeOp::Safe,
+                Destination::Expression(Expression::MemberAccess(vec![
+                    "event".to_string(),
+                    "type".to_string(),
+                ])),
+            )],
             on_fail: None,
         };
 
@@ -345,7 +397,9 @@ mod tests {
         let mut event = std::collections::HashMap::new();
         event.insert("file".to_string(), Value::Record(file));
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::String("seed".to_string()))),
             operations: vec![
                 (
@@ -368,7 +422,10 @@ mod tests {
 
         let mut runtime = Runtime::new();
         runtime.env.set("event", Value::Record(event));
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
 
         let written = std::fs::read_to_string(&output).expect("should read output");
         assert_eq!(written, format!("{}\n", watched.to_string_lossy()));
@@ -389,12 +446,15 @@ mod tests {
         let mut event = std::collections::HashMap::new();
         event.insert("file".to_string(), Value::Record(file));
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::String("seed".to_string()))),
             operations: vec![
                 (
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "read".to_string(),
                         arguments: vec![Expression::MemberAccess(vec![
                             "event".to_string(),
@@ -416,7 +476,10 @@ mod tests {
 
         let mut runtime = Runtime::new();
         runtime.env.set("event", Value::Record(event));
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
 
         let written = std::fs::read_to_string(&output).expect("should read output");
         assert_eq!(written, "hello\n");
@@ -428,7 +491,9 @@ mod tests {
         let dest = dir.path().join("dest.txt");
         let copy = dir.path().join("copy.txt");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::String(
                 "hello, world!".to_string(),
             ))),
@@ -450,7 +515,10 @@ mod tests {
         };
 
         let mut runtime = Runtime::new();
-        runtime.execute_flow(&flow).await.expect("flow should execute");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("flow should execute");
 
         let dest_contents = std::fs::read_to_string(&dest).expect("should read dest");
         let copy_contents = std::fs::read_to_string(&copy).expect("should read copy");
@@ -464,9 +532,16 @@ mod tests {
 Ada,30\" >> csv.parse() >> parsed";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let parsed = runtime.env.get("parsed").cloned().expect("parsed should be set");
+        let parsed = runtime
+            .env
+            .get("parsed")
+            .cloned()
+            .expect("parsed should be set");
         let Value::Record(root) = parsed else {
             panic!("parsed should be a record");
         };
@@ -493,9 +568,16 @@ Ada,30\" >> csv.parse() >> parsed";
 Ada,30\" >> csv.parse >> parsed";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let parsed = runtime.env.get("parsed").cloned().expect("parsed should be set");
+        let parsed = runtime
+            .env
+            .get("parsed")
+            .cloned()
+            .expect("parsed should be set");
         let Value::Record(root) = parsed else {
             panic!("parsed should be a record");
         };
@@ -517,9 +599,16 @@ Ada,30\" >> csv.parse >> parsed";
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let parsed = runtime.env.get("parsed").cloned().expect("parsed should be set");
+        let parsed = runtime
+            .env
+            .get("parsed")
+            .cloned()
+            .expect("parsed should be set");
         let Value::Record(root) = parsed else {
             panic!("parsed should be a record");
         };
@@ -534,7 +623,10 @@ Ada,30\" >> csv.parse >> parsed";
         let script = "@import \"std.csv\" as csv\n\"missing.csv\" >> csv.parse() >> parsed";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        let err = runtime.execute(&program).await.expect_err("script should fail");
+        let err = runtime
+            .execute(&program)
+            .await
+            .expect_err("script should fail");
         assert!(err.contains("Failed to read 'missing.csv'"));
     }
 
@@ -545,14 +637,19 @@ Ada,91
 Bob,10\" >> csv.parse >> @filter(row >> row.Index == \\\"91\") >> filtered";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.env.register_function(FunctionDef { comments: vec![], span: Span::default(),
+        runtime.env.register_function(FunctionDef {
+            comments: vec![],
+            span: Span::default(),
             name: "csv.parse".to_string(),
             parameters: vec!["input".to_string()],
-            body: FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+            body: FlowOrBranch::Flow(PipeFlow {
+                comments: vec![],
+                span: Span::default(),
                 source: Source::Expression(Expression::Identifier("input".to_string())),
                 operations: vec![(
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "csv.parse".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -562,8 +659,15 @@ Bob,10\" >> csv.parse >> @filter(row >> row.Index == \\\"91\") >> filtered";
             }),
         });
 
-        runtime.execute(&program).await.expect("script should execute");
-        let filtered = runtime.env.get("filtered").cloned().expect("filtered should be set");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
+        let filtered = runtime
+            .env
+            .get("filtered")
+            .cloned()
+            .expect("filtered should be set");
         let Value::List(rows) = filtered else {
             panic!("filtered should be a list");
         };
@@ -577,14 +681,19 @@ Ada,91
 Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.env.register_function(FunctionDef { comments: vec![], span: Span::default(),
+        runtime.env.register_function(FunctionDef {
+            comments: vec![],
+            span: Span::default(),
             name: "csv.parse".to_string(),
             parameters: vec!["input".to_string()],
-            body: FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+            body: FlowOrBranch::Flow(PipeFlow {
+                comments: vec![],
+                span: Span::default(),
                 source: Source::Expression(Expression::Identifier("input".to_string())),
                 operations: vec![(
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "csv.parse".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -594,8 +703,15 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             }),
         });
 
-        runtime.execute(&program).await.expect("script should execute");
-        let filtered = runtime.env.get("filtered").cloned().expect("filtered should be set");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
+        let filtered = runtime
+            .env
+            .get("filtered")
+            .cloned()
+            .expect("filtered should be set");
         let Value::List(rows) = filtered else {
             panic!("filtered should be a list");
         };
@@ -610,9 +726,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 100,C\" >> csv.parse >> filter(row >> row.index > 90) >> filtered";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let filtered = runtime.env.get("filtered").cloned().expect("filtered should be set");
+        let filtered = runtime
+            .env
+            .get("filtered")
+            .cloned()
+            .expect("filtered should be set");
         let Value::List(rows) = filtered else {
             panic!("filtered should be a list");
         };
@@ -626,9 +749,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 91,B\" >> csv.parse >> filter(row >> false && missing_value) >> filtered";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let filtered = runtime.env.get("filtered").cloned().expect("filtered should be set");
+        let filtered = runtime
+            .env
+            .get("filtered")
+            .cloned()
+            .expect("filtered should be set");
         let Value::List(rows) = filtered else {
             panic!("filtered should be a list");
         };
@@ -646,12 +776,18 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
         let content = std::fs::read_to_string(&output).expect("output file should exist");
         // Each row should be written individually (force-appended)
         assert!(content.contains("91"), "Expected row with index 91");
         assert!(content.contains("100"), "Expected row with index 100");
-        assert!(!content.contains("89"), "Should not contain filtered-out row 89");
+        assert!(
+            !content.contains("89"),
+            "Should not contain filtered-out row 89"
+        );
     }
 
     #[tokio::test]
@@ -659,7 +795,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let script = "@import \"std.out\" as stdout\n\\\"hello\" >> stdout";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
     }
 
     #[tokio::test]
@@ -667,14 +806,19 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let script = "\\\"Index,name\n1,A\n2,B\" >> csv.parse() >> map(row >> row.name) >> names";
         let program = crate::parser::parse(script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.env.register_function(FunctionDef { comments: vec![], span: Span::default(),
+        runtime.env.register_function(FunctionDef {
+            comments: vec![],
+            span: Span::default(),
             name: "csv.parse".to_string(),
             parameters: vec!["input".to_string()],
-            body: FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+            body: FlowOrBranch::Flow(PipeFlow {
+                comments: vec![],
+                span: Span::default(),
                 source: Source::Expression(Expression::Identifier("input".to_string())),
                 operations: vec![(
                     PipeOp::Safe,
-                    Destination::Directive(DirectiveFlow { span: Span::default(),
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
                         name: "csv.parse".to_string(),
                         arguments: vec![],
                         alias: None,
@@ -684,8 +828,15 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             }),
         });
 
-        runtime.execute(&program).await.expect("script should execute");
-        let names = runtime.env.get("names").cloned().expect("names should be set");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
+        let names = runtime
+            .env
+            .get("names")
+            .cloned()
+            .expect("names should be set");
         let Value::List(items) = names else {
             panic!("names should be a list");
         };
@@ -704,7 +855,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let text = std::fs::read_to_string(out).expect("should read output");
         let lines = text.lines().collect::<Vec<_>>();
@@ -732,7 +886,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let output = std::fs::read_to_string(&out).expect("should read output");
         assert!(!output.lines().next().unwrap_or("").contains("col13"));
@@ -743,7 +900,8 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let headers = reader.headers().expect("headers should parse").clone();
         assert_eq!(headers.len(), 3);
 
-        let rows = reader.records()
+        let rows = reader
+            .records()
             .map(|r| r.expect("row should parse"))
             .collect::<Vec<_>>();
         assert_eq!(rows.len(), 2);
@@ -767,9 +925,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         );
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
-        let parsed = runtime.env.get("parsed").cloned().expect("parsed should be set");
+        let parsed = runtime
+            .env
+            .get("parsed")
+            .cloned()
+            .expect("parsed should be set");
         let Value::Record(root) = parsed else {
             panic!("parsed should be record");
         };
@@ -792,11 +957,8 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let input = dir.path().join("customers.csv");
         let high = dir.path().join("high.csv");
         let audit = dir.path().join("audit_trail.csv");
-        std::fs::write(
-            &input,
-            "Index,Company\n90,Alpha\n92,Beta\n100,Gamma\n",
-        )
-        .expect("should write input");
+        std::fs::write(&input, "Index,Company\n90,Alpha\n92,Beta\n100,Gamma\n")
+            .expect("should write input");
 
         let script = format!(
             "@import \"std.csv\" as csv\n\"{}\" >> csv.parse >> data\ndata >> [ filter(row >> row.Index > 91) >> \"{}\", \"{}\" ]",
@@ -807,7 +969,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let high_text = std::fs::read_to_string(&high).expect("high should be written");
         assert!(high_text.contains("92"));
@@ -835,7 +1000,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute");
 
         let backup_text = std::fs::read_to_string(&backup).expect("backup should exist");
         let second_text = std::fs::read_to_string(&second).expect("second should exist");
@@ -862,9 +1030,15 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         let program = crate::parser::parse(&script).expect("script should parse");
         let mut runtime = Runtime::new();
-        runtime.execute(&program).await.expect("script should execute via on_fail");
+        runtime
+            .execute(&program)
+            .await
+            .expect("script should execute via on_fail");
 
-        assert!(!backup.exists(), "atomic rollback should remove first write");
+        assert!(
+            !backup.exists(),
+            "atomic rollback should remove first write"
+        );
         assert!(!second.exists(), "later steps should not be executed");
         assert!(!status.exists(), "later steps should not be executed");
         let failure_text = std::fs::read_to_string(&failure).expect("on_fail output should exist");
@@ -894,18 +1068,30 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let dir = tempdir().expect("tempdir");
         let out = dir.path().join("out.txt");
 
-        let program = Program { span: Span::default(),
-            statements: vec![Statement::Pipe(PipeFlow { comments: vec![], span: Span::default(),
-                source: Source::Expression(Expression::Literal(Literal::String("hello from log".to_string()))),
+        let program = Program {
+            span: Span::default(),
+            statements: vec![Statement::Pipe(PipeFlow {
+                comments: vec![],
+                span: Span::default(),
+                source: Source::Expression(Expression::Literal(Literal::String(
+                    "hello from log".to_string(),
+                ))),
                 operations: vec![
-                    (PipeOp::Safe, Destination::Directive(DirectiveFlow { span: Span::default(),
-                        name: "log".to_string(),
-                        arguments: vec![],
-                        alias: None,
-                    })),
-                    (PipeOp::Safe, Destination::Expression(Expression::Literal(Literal::Path(
-                        out.to_string_lossy().to_string(),
-                    )))),
+                    (
+                        PipeOp::Safe,
+                        Destination::Directive(DirectiveFlow {
+                            span: Span::default(),
+                            name: "log".to_string(),
+                            arguments: vec![],
+                            alias: None,
+                        }),
+                    ),
+                    (
+                        PipeOp::Safe,
+                        Destination::Expression(Expression::Literal(Literal::Path(
+                            out.to_string_lossy().to_string(),
+                        ))),
+                    ),
                 ],
                 on_fail: None,
             })],
@@ -924,11 +1110,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let dir = tempdir().expect("tempdir");
         let out = dir.path().join("written.txt");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
-            source: Source::Expression(Expression::Literal(Literal::String("written data".to_string()))),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
+            source: Source::Expression(Expression::Literal(Literal::String(
+                "written data".to_string(),
+            ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Directive(DirectiveFlow { span: Span::default(),
+                Destination::Directive(DirectiveFlow {
+                    span: Span::default(),
                     name: "write".to_string(),
                     arguments: vec![Expression::Literal(Literal::Path(
                         out.to_string_lossy().to_string(),
@@ -953,13 +1144,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let input = dir.path().join("data.txt");
         std::fs::write(&input, "alpha\nbeta\ngamma").expect("write input");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 input.to_string_lossy().to_string(),
             ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Directive(DirectiveFlow { span: Span::default(),
+                Destination::Directive(DirectiveFlow {
+                    span: Span::default(),
                     name: "lines".to_string(),
                     arguments: vec![],
                     alias: Some("data".to_string()),
@@ -990,13 +1184,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         // 10 bytes of data, chunk at 4 bytes → 3 chunks
         std::fs::write(&input, "0123456789").expect("write input");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 input.to_string_lossy().to_string(),
             ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Directive(DirectiveFlow { span: Span::default(),
+                Destination::Directive(DirectiveFlow {
+                    span: Span::default(),
                     name: "chunk".to_string(),
                     arguments: vec![Expression::Literal(Literal::String("4".to_string()))],
                     alias: None,
@@ -1024,13 +1221,16 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let input = dir.path().join("data.txt");
         std::fs::write(&input, "abc").expect("write input");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
             source: Source::Expression(Expression::Literal(Literal::Path(
                 input.to_string_lossy().to_string(),
             ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Directive(DirectiveFlow { span: Span::default(),
+                Destination::Directive(DirectiveFlow {
+                    span: Span::default(),
                     name: "chunk".to_string(),
                     arguments: vec![Expression::Literal(Literal::String("0".to_string()))],
                     alias: None,
@@ -1049,11 +1249,14 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
     async fn concat_function_joins_values() {
         let mut runtime = Runtime::new();
         let result = runtime
-            .call_function("concat", vec![
-                Value::String("hello".to_string()),
-                Value::String(" ".to_string()),
-                Value::String("world".to_string()),
-            ])
+            .call_function(
+                "concat",
+                vec![
+                    Value::String("hello".to_string()),
+                    Value::String(" ".to_string()),
+                    Value::String("world".to_string()),
+                ],
+            )
             .await
             .expect("concat should succeed");
         assert_eq!(result.as_string(), "hello world");
@@ -1067,7 +1270,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         let mut runtime = Runtime::new();
         let result = runtime
-            .call_function("exists", vec![Value::String(file.to_string_lossy().to_string())])
+            .call_function(
+                "exists",
+                vec![Value::String(file.to_string_lossy().to_string())],
+            )
             .await
             .expect("exists should succeed");
         assert!(matches!(result, Value::Boolean(true)));
@@ -1077,7 +1283,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
     async fn exists_function_returns_false_for_missing_file() {
         let mut runtime = Runtime::new();
         let result = runtime
-            .call_function("exists", vec![Value::String("/nonexistent/file.txt".to_string())])
+            .call_function(
+                "exists",
+                vec![Value::String("/nonexistent/file.txt".to_string())],
+            )
             .await
             .expect("exists should succeed");
         assert!(matches!(result, Value::Boolean(false)));
@@ -1168,7 +1377,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             "&&".to_string(),
             Box::new(Expression::Identifier("undefined_thing".to_string())),
         );
-        let result = runtime.eval_expression(&expr).await.expect("should short-circuit");
+        let result = runtime
+            .eval_expression(&expr)
+            .await
+            .expect("should short-circuit");
         assert!(matches!(result, Value::Boolean(false)));
     }
 
@@ -1181,7 +1393,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             "||".to_string(),
             Box::new(Expression::Identifier("undefined_thing".to_string())),
         );
-        let result = runtime.eval_expression(&expr).await.expect("should short-circuit");
+        let result = runtime
+            .eval_expression(&expr)
+            .await
+            .expect("should short-circuit");
         assert!(matches!(result, Value::Boolean(true)));
     }
 
@@ -1230,12 +1445,18 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let csv_input = dir.path().join("products.csv");
         let csv_output = dir.path().join("expensive.csv");
 
-        std::fs::write(&csv_input, "name,price\nWidget,500\nGadget,1500\nThing,200\n")
-            .expect("write csv");
+        std::fs::write(
+            &csv_input,
+            "name,price\nWidget,500\nGadget,1500\nThing,200\n",
+        )
+        .expect("write csv");
 
         // @read >> @csv.parse >> filter(lambda) >> "output"
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
-            source: Source::Directive(DirectiveFlow { span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
+            source: Source::Directive(DirectiveFlow {
+                span: Span::default(),
                 name: "read".to_string(),
                 arguments: vec![Expression::Literal(Literal::Path(
                     csv_input.to_string_lossy().to_string(),
@@ -1243,31 +1464,49 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
                 alias: None,
             }),
             operations: vec![
-                (PipeOp::Safe, Destination::Directive(DirectiveFlow { span: Span::default(),
-                    name: "csv.parse".to_string(),
-                    arguments: vec![],
-                    alias: Some("data".to_string()),
-                })),
-                (PipeOp::Safe, Destination::Directive(DirectiveFlow { span: Span::default(),
-                    name: "filter".to_string(),
-                    arguments: vec![Expression::Lambda(Lambda { span: Span::default(),
-                        param: "row".to_string(),
-                        body: Box::new(Expression::BinaryOp(
-                            Box::new(Expression::MemberAccess(vec!["row".to_string(), "price".to_string()])),
-                            ">".to_string(),
-                            Box::new(Expression::Literal(Literal::Number(1000.0))),
-                        )),
-                    })],
-                    alias: None,
-                })),
-                (PipeOp::Safe, Destination::Expression(Expression::Literal(Literal::Path(
-                    csv_output.to_string_lossy().to_string(),
-                )))),
+                (
+                    PipeOp::Safe,
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
+                        name: "csv.parse".to_string(),
+                        arguments: vec![],
+                        alias: Some("data".to_string()),
+                    }),
+                ),
+                (
+                    PipeOp::Safe,
+                    Destination::Directive(DirectiveFlow {
+                        span: Span::default(),
+                        name: "filter".to_string(),
+                        arguments: vec![Expression::Lambda(Lambda {
+                            span: Span::default(),
+                            param: "row".to_string(),
+                            body: Box::new(Expression::BinaryOp(
+                                Box::new(Expression::MemberAccess(vec![
+                                    "row".to_string(),
+                                    "price".to_string(),
+                                ])),
+                                ">".to_string(),
+                                Box::new(Expression::Literal(Literal::Number(1000.0))),
+                            )),
+                        })],
+                        alias: None,
+                    }),
+                ),
+                (
+                    PipeOp::Safe,
+                    Destination::Expression(Expression::Literal(Literal::Path(
+                        csv_output.to_string_lossy().to_string(),
+                    ))),
+                ),
             ],
             on_fail: None,
         };
         let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().unwrap());
-        runtime.execute_flow(&flow).await.expect("pipeline should succeed");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("pipeline should succeed");
 
         let output = std::fs::read_to_string(&csv_output).expect("read output");
         assert!(output.contains("Gadget"));
@@ -1283,7 +1522,8 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let result = runtime
             .call_filter(vec![
                 Value::List(vec![]),
-                Value::Lambda(Lambda { span: Span::default(),
+                Value::Lambda(Lambda {
+                    span: Span::default(),
                     param: "x".to_string(),
                     body: Box::new(Expression::Literal(Literal::Boolean(true))),
                 }),
@@ -1301,10 +1541,14 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let result = runtime
             .call_filter(vec![
                 Value::List(vec![Value::Record(row)]),
-                Value::Lambda(Lambda { span: Span::default(),
+                Value::Lambda(Lambda {
+                    span: Span::default(),
                     param: "x".to_string(),
                     body: Box::new(Expression::BinaryOp(
-                        Box::new(Expression::MemberAccess(vec!["x".to_string(), "val".to_string()])),
+                        Box::new(Expression::MemberAccess(vec![
+                            "x".to_string(),
+                            "val".to_string(),
+                        ])),
                         ">".to_string(),
                         Box::new(Expression::Literal(Literal::Number(100.0))),
                     )),
@@ -1324,8 +1568,11 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         // Source reads a non-existent file → triggers on_fail
         // on_fail as e >> e >> "err.txt"
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
-            source: Source::Directive(DirectiveFlow { span: Span::default(),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
+            source: Source::Directive(DirectiveFlow {
+                span: Span::default(),
                 name: "read".to_string(),
                 arguments: vec![Expression::Literal(Literal::Path(
                     "/definitely/not/a/real/file.txt".to_string(),
@@ -1338,9 +1585,12 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
                     "unused.txt".to_string(),
                 ))),
             )],
-            on_fail: Some(OnFail { span: Span::default(),
+            on_fail: Some(OnFail {
+                span: Span::default(),
                 alias: Some("e".to_string()),
-                handler: Box::new(FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+                handler: Box::new(FlowOrBranch::Flow(PipeFlow {
+                    comments: vec![],
+                    span: Span::default(),
                     source: Source::Expression(Expression::Identifier("e".to_string())),
                     operations: vec![(
                         PipeOp::Safe,
@@ -1353,10 +1603,17 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             }),
         };
         let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().unwrap());
-        runtime.execute_flow(&flow).await.expect("on_fail should handle gracefully");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("on_fail should handle gracefully");
 
         let err_content = std::fs::read_to_string(&error_log).expect("error log should exist");
-        assert!(err_content.contains("Failed to read"), "error message should mention the failure: {}", err_content);
+        assert!(
+            err_content.contains("Failed to read"),
+            "error message should mention the failure: {}",
+            err_content
+        );
     }
 
     // ── Branch with multiple file outputs ───────────────────────────────
@@ -1367,20 +1624,29 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
         let out_a = dir.path().join("a.txt");
         let out_b = dir.path().join("b.txt");
 
-        let flow = PipeFlow { comments: vec![], span: Span::default(),
-            source: Source::Expression(Expression::Literal(Literal::String("shared data".to_string()))),
+        let flow = PipeFlow {
+            comments: vec![],
+            span: Span::default(),
+            source: Source::Expression(Expression::Literal(Literal::String(
+                "shared data".to_string(),
+            ))),
             operations: vec![(
                 PipeOp::Safe,
-                Destination::Branch(Branch { span: Span::default(),
+                Destination::Branch(Branch {
+                    span: Span::default(),
                     items: vec![
-                        BranchItem::Flow(PipeFlow { comments: vec![], span: Span::default(),
+                        BranchItem::Flow(PipeFlow {
+                            comments: vec![],
+                            span: Span::default(),
                             source: Source::Expression(Expression::Literal(Literal::Path(
                                 out_a.to_string_lossy().to_string(),
                             ))),
                             operations: vec![],
                             on_fail: None,
                         }),
-                        BranchItem::Flow(PipeFlow { comments: vec![], span: Span::default(),
+                        BranchItem::Flow(PipeFlow {
+                            comments: vec![],
+                            span: Span::default(),
                             source: Source::Expression(Expression::Literal(Literal::Path(
                                 out_b.to_string_lossy().to_string(),
                             ))),
@@ -1393,7 +1659,10 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
             on_fail: None,
         };
         let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().unwrap());
-        runtime.execute_flow(&flow).await.expect("branch should succeed");
+        runtime
+            .execute_flow(&flow)
+            .await
+            .expect("branch should succeed");
 
         let a_content = std::fs::read_to_string(&out_a).expect("a.txt should exist");
         let b_content = std::fs::read_to_string(&out_b).expect("b.txt should exist");
@@ -1410,12 +1679,17 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
 
         // Define: shout(x) => x + "!"
         // Then: "hello" >> shout >> "result.txt"
-        let program = Program { span: Span::default(),
+        let program = Program {
+            span: Span::default(),
             statements: vec![
-                Statement::Function(FunctionDef { comments: vec![], span: Span::default(),
+                Statement::Function(FunctionDef {
+                    comments: vec![],
+                    span: Span::default(),
                     name: "shout".to_string(),
                     parameters: vec!["x".to_string()],
-                    body: FlowOrBranch::Flow(PipeFlow { comments: vec![], span: Span::default(),
+                    body: FlowOrBranch::Flow(PipeFlow {
+                        comments: vec![],
+                        span: Span::default(),
                         source: Source::Expression(Expression::BinaryOp(
                             Box::new(Expression::Identifier("x".to_string())),
                             "+".to_string(),
@@ -1425,17 +1699,28 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
                         on_fail: None,
                     }),
                 }),
-                Statement::Pipe(PipeFlow { comments: vec![], span: Span::default(),
-                    source: Source::Expression(Expression::Literal(Literal::String("hello".to_string()))),
+                Statement::Pipe(PipeFlow {
+                    comments: vec![],
+                    span: Span::default(),
+                    source: Source::Expression(Expression::Literal(Literal::String(
+                        "hello".to_string(),
+                    ))),
                     operations: vec![
-                        (PipeOp::Safe, Destination::FunctionCall(FunctionCall { span: Span::default(),
-                            name: "shout".to_string(),
-                            arguments: vec![],
-                            alias: None,
-                        })),
-                        (PipeOp::Safe, Destination::Expression(Expression::Literal(Literal::Path(
-                            out.to_string_lossy().to_string(),
-                        )))),
+                        (
+                            PipeOp::Safe,
+                            Destination::FunctionCall(FunctionCall {
+                                span: Span::default(),
+                                name: "shout".to_string(),
+                                arguments: vec![],
+                                alias: None,
+                            }),
+                        ),
+                        (
+                            PipeOp::Safe,
+                            Destination::Expression(Expression::Literal(Literal::Path(
+                                out.to_string_lossy().to_string(),
+                            ))),
+                        ),
                     ],
                     on_fail: None,
                 }),
@@ -1460,7 +1745,8 @@ Bob,10\" >> csv.parse() >> filter(row >> row.Index == \\\"91\") >> filtered";
                     Value::Number(2.0),
                     Value::Number(3.0),
                 ]),
-                Value::Lambda(Lambda { span: Span::default(),
+                Value::Lambda(Lambda {
+                    span: Span::default(),
                     param: "x".to_string(),
                     body: Box::new(Expression::BinaryOp(
                         Box::new(Expression::Identifier("x".to_string())),

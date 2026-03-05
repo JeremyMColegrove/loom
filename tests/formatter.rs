@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use loom::parser::parse;
     use loom::formatter::Formatter;
+    use loom::parser::parse;
 
     #[test]
     fn formats_simple_pipe() {
@@ -11,7 +11,7 @@ mod tests {
         "#;
         let program = parse(src).expect("parse");
         let formatted = Formatter::format(&program);
-        
+
         let expected = "// Top comment\n// Inline comment\n\"hello\" >> print\n";
         assert_eq!(formatted, expected);
     }

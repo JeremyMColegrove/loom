@@ -142,7 +142,7 @@ impl Formatter {
 
     fn format_pipe_flow(&mut self, flow: &PipeFlow, is_inside_branch: bool) {
         self.format_source(&flow.source);
-        
+
         for (op, dest) in &flow.operations {
             self.push(" ");
             match op {
@@ -161,7 +161,7 @@ impl Formatter {
                 self.push(alias);
                 self.push(" ");
             }
-            
+
             let is_branch = matches!(on_fail.handler.as_ref(), FlowOrBranch::Branch(_));
             if is_branch {
                 self.push(">> [");
@@ -170,9 +170,9 @@ impl Formatter {
             } else {
                 self.push(">> ");
             }
-            
+
             self.format_flow_or_branch(on_fail.handler.as_ref(), !is_branch);
-            
+
             if is_branch {
                 self.indent_level -= 1;
                 self.push_indent();
@@ -198,9 +198,9 @@ impl Formatter {
                 self.push("[");
                 self.push_newline();
                 self.indent_level += 1;
-                
+
                 self.format_flow_or_branch(&FlowOrBranch::Branch(branch.clone()), true);
-                
+
                 self.indent_level -= 1;
                 self.push_indent();
                 self.push("]");
