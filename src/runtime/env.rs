@@ -104,6 +104,12 @@ pub struct Environment {
     scopes: Vec<HashMap<String, Value>>,
 }
 
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Environment {
     pub fn new() -> Self {
         Self {
@@ -240,7 +246,7 @@ mod tests {
         assert_eq!(Value::Path("/a/b".to_string()).as_string(), "/a/b");
         assert_eq!(Value::String("hello".to_string()).as_string(), "hello");
         assert_eq!(Value::Number(42.0).as_string(), "42");
-        assert_eq!(Value::Number(3.14).as_string(), "3.14");
+        assert_eq!(Value::Number(2.5).as_string(), "2.5");
         assert_eq!(Value::Boolean(true).as_string(), "true");
         assert_eq!(Value::Boolean(false).as_string(), "false");
         assert_eq!(Value::Null.as_string(), "null");

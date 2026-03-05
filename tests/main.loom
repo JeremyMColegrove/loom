@@ -2,6 +2,7 @@
 @import "std.csv" as csv
 @import "std.out" as stdout
 @import "logic" as util
+
 // Setup the observer on the local inbox
 @watch("./inbox/") as event >> filter(event.file.ext == "csv" && event.type == "created") >> @atomic >> [
     // Step 2: read the new file, parse it as csv
@@ -10,7 +11,7 @@
         filter(row >> util.is_valid(row) && row.price > 1000) as data >> [
             stdout,
             // print to screen
-            data >> "premium_sales.csv",
+            data >>> "premium_sales.csv",
             // append to file
             // append string to file
             \"Premium record processed: " >> "activity.log"

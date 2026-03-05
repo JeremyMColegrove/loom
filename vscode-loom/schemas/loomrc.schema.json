@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://loom.dev/schemas/loomrc.schema.json",
+  "title": "Loom Runtime Policy",
+  "description": "Security policy configuration for Loom runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [1],
+      "description": "Policy schema version."
+    },
+    "allow_all": {
+      "type": "boolean",
+      "description": "If true, allow all capabilities unless denied by deny_globs."
+    },
+    "trust_mode": {
+      "type": "string",
+      "enum": ["trusted", "restricted"],
+      "description": "trusted enforces policy; restricted also disables write/move/import/watch operations."
+    },
+    "read_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed root paths for read operations."
+    },
+    "write_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed root paths for write operations."
+    },
+    "import_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed root paths for @import module loading."
+    },
+    "watch_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed root paths for @watch roots."
+    },
+    "deny_globs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Glob patterns that deny access even when allowlisted."
+    }
+  },
+  "required": ["version"]
+}

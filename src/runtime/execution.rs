@@ -2,11 +2,12 @@ use crate::ast::{Program, Statement};
 use crate::runtime::builtins::BuiltinRegistry;
 use crate::runtime::env::Value;
 use crate::runtime::error::RuntimeResult;
-use crate::runtime::{ModuleLoader, Runtime};
+use crate::runtime::security::{SecurityPolicy, TrustMode};
+use crate::runtime::{ModuleLoader, Runtime, RuntimeLimits};
 use log::debug;
-use std::cell::RefCell;
 use std::collections::HashSet;
-use std::rc::Rc;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 impl Runtime {
     pub fn new() -> Self {
@@ -16,13 +17,17 @@ impl Runtime {
         Self {
             env,
             builtins: BuiltinRegistry::new(),
+            limits: RuntimeLimits::default(),
             script_dir: None,
+            security_policy: SecurityPolicy::restricted(),
+            trust_mode: TrustMode::Restricted,
+            audit_log: Vec::new(),
             atomic_active: false,
             atomic_context: None,
             atomic_txn: None,
             callable_sinks: HashSet::new(),
             shutdown_tx,
-            module_loader: Rc::new(RefCell::new(ModuleLoader::default())),
+            module_loader: Arc::new(RwLock::new(ModuleLoader::default())),
         }
     }
 
@@ -64,5 +69,11 @@ impl Runtime {
         }
         .await;
         result.map_err(|e| e.to_string())
+    }
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self::new()
     }
 }

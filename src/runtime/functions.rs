@@ -71,10 +71,31 @@ impl Runtime {
             if name == "map" {
                 return self.call_map(args).await;
             }
+            if name == "exists" {
+                let raw_path = args.first().map(|v| v.as_string()).unwrap_or_default();
+                let resolved = self.resolve_user_path(&raw_path);
+                if resolved.exists() {
+                    let _ = self.authorize_existing_path(
+                        crate::runtime::security::Capability::Read,
+                        crate::runtime::security::AuditOperation::Read,
+                        &raw_path,
+                    )?;
+                } else {
+                    let _ = self.authorize_new_path(
+                        crate::runtime::security::Capability::Read,
+                        crate::runtime::security::AuditOperation::Read,
+                        &raw_path,
+                    )?;
+                }
+                return Ok(Value::Boolean(resolved.exists()));
+            }
 
             // Check builtins first
             if let Some(handler) = self.builtins.get_builtin_function(name) {
-                return Ok(handler(args)?);
+                return tokio::task::spawn_blocking(move || handler(args))
+                    .await
+                    .map_err(|e| RuntimeError::message(format!("Builtin task failed: {}", e)))?
+                    .map_err(RuntimeError::message);
             }
 
             // Check user-defined functions

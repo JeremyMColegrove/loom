@@ -80,7 +80,17 @@
           "description": "Additional arguments passed to the Loom binary when starting the LSP server."
         }
       }
-    }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          ".loomrc.json",
+          "/.loomrc.json",
+          "loom.config.json"
+        ],
+        "url": "./schemas/loomrc.schema.json"
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc -p ./",

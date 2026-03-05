@@ -52,13 +52,12 @@ fn get_context_at_position(text: &str, line: u32, character: u32) -> CompletionC
         return CompletionContext::MemberAccess;
     }
 
-    if trimmed.contains(">>") {
-        if let Some(last_pipe) = trimmed.rfind(">>") {
-            let after_pipe = trimmed[last_pipe + 2..].trim();
-            if after_pipe.is_empty() || after_pipe.chars().all(|c| c.is_alphanumeric() || c == '_')
-            {
-                return CompletionContext::PipeDestination;
-            }
+    if trimmed.contains(">>")
+        && let Some(last_pipe) = trimmed.rfind(">>")
+    {
+        let after_pipe = trimmed[last_pipe + 2..].trim();
+        if after_pipe.is_empty() || after_pipe.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return CompletionContext::PipeDestination;
         }
     }
 

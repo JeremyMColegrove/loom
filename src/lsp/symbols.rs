@@ -57,10 +57,10 @@ fn find_branch_symbol_at_pos<'a>(
         return None;
     }
     for item in &branch.items {
-        if let crate::ast::BranchItem::Flow(flow) = item {
-            if let Some(found) = find_pipe_flow_symbol_at_pos(flow, pos) {
-                return Some(found);
-            }
+        if let crate::ast::BranchItem::Flow(flow) = item
+            && let Some(found) = find_pipe_flow_symbol_at_pos(flow, pos)
+        {
+            return Some(found);
         }
     }
     None
@@ -84,12 +84,11 @@ fn find_pipe_flow_symbol_at_pos<'a>(
         }
     }
 
-    if let Some(on_fail) = &flow.on_fail {
-        if on_fail.span.contains_zero_based(pos.line, pos.character) {
-            if let Some(found) = find_flow_or_branch_symbol_at_pos(&on_fail.handler, pos) {
-                return Some(found);
-            }
-        }
+    if let Some(on_fail) = &flow.on_fail
+        && on_fail.span.contains_zero_based(pos.line, pos.character)
+        && let Some(found) = find_flow_or_branch_symbol_at_pos(&on_fail.handler, pos)
+    {
+        return Some(found);
     }
 
     None

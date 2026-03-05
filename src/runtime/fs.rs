@@ -6,6 +6,7 @@ use crate::runtime::Runtime;
 use crate::runtime::atomic::AtomicContext;
 use crate::runtime::env::Value;
 use crate::runtime::error::{RuntimeError, RuntimeResult};
+use crate::runtime::security::{AuditOperation, Capability};
 
 impl Runtime {
     pub(crate) fn write_or_move_path(
@@ -24,60 +25,35 @@ impl Runtime {
         }
 
         let payload = match pipe_val {
-            Value::Path(src) => std::fs::read_to_string(src)
-                .map_err(|e| format!("Failed to read '{}': {}", src, e))?,
+            Value::Path(src) => self.read_text_path(src)?,
             _ => self.serialize_for_path_output(pipe_val),
         };
 
-        self.snapshot_if_atomic(raw_target)?;
+        let target_path =
+            self.authorize_new_path(Capability::Write, AuditOperation::Write, raw_target)?;
+        let target = target_path.to_string_lossy().to_string();
+        self.snapshot_if_atomic(&target)?;
         match op {
             PipeOp::Safe => {
                 if payload.is_empty() {
-                    return Ok(Value::Path(raw_target.to_string()));
+                    return Ok(Value::Path(target));
                 }
 
-                debug!("appending output to {}", raw_target);
-                let mut file = std::fs::OpenOptions::new()
-                    .create(true)
-                    .read(true)
-                    .append(true)
-                    .open(raw_target)
-                    .map_err(|e| format!("Failed to open '{}': {}", raw_target, e))?;
-                use std::io::{Read, Seek, SeekFrom, Write};
-
-                let mut needs_newline = false;
-                if let Ok(meta) = file.metadata() {
-                    if meta.len() > 0 {
-                        if file.seek(SeekFrom::End(-1)).is_ok() {
-                            let mut buf = [0; 1];
-                            if file.read_exact(&mut buf).is_ok() && buf[0] != b'\n' {
-                                needs_newline = true;
-                            }
-                        }
-                    }
+                debug!("appending output to {}", target);
+                let mut content = payload;
+                if !content.ends_with('\n') {
+                    content.push('\n');
                 }
-
-                if needs_newline {
-                    let _ = file.write_all(b"\n");
-                }
-
-                let mut bytes = payload.into_bytes();
-                if !bytes.ends_with(b"\n") {
-                    bytes.push(b'\n');
-                }
-
-                file.write_all(&bytes)
-                    .map_err(|e| format!("Failed to append '{}': {}", raw_target, e))?;
+                self.append_path(&target, &content)?;
             }
             PipeOp::Force => {
-                debug!("overwriting output at {}", raw_target);
-                std::fs::write(raw_target, payload)
-                    .map_err(|e| format!("Failed to write '{}': {}", raw_target, e))?;
+                debug!("overwriting output at {}", target);
+                self.write_path(&target, &payload)?;
             }
             PipeOp::Move => unreachable!(),
         }
 
-        Ok(Value::Path(raw_target.to_string()))
+        Ok(Value::Path(target))
     }
 
     pub(crate) fn serialize_for_path_output(&self, value: &Value) -> String {
@@ -190,44 +166,41 @@ impl Runtime {
             .file_name()
             .ok_or_else(|| format!("Source path has no file name: '{}'", src_path))?;
 
-        let mut target_path = std::path::PathBuf::from(raw_target);
-        if !target_path.is_absolute() {
-            if let Some(dir) = &self.script_dir {
-                target_path = std::path::PathBuf::from(dir).join(target_path);
-            }
-        }
+        let mut target_path = self.resolve_user_path(raw_target);
 
         if self.is_directory_target(raw_target) {
-            std::fs::create_dir_all(&target_path).map_err(|e| {
-                format!(
-                    "Failed to create directory '{}': {}",
-                    target_path.display(),
-                    e
-                )
-            })?;
+            self.create_dir_all_checked(&target_path)?;
             target_path = target_path.join(file_name);
-        } else {
-            if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| {
-                    format!("Failed to create directory '{}': {}", parent.display(), e)
-                })?;
-            }
+        } else if let Some(parent) = target_path.parent() {
+            self.create_dir_all_checked(parent)?;
         }
 
         let dest = target_path.to_string_lossy().to_string();
+        let (src_checked, dest_checked) =
+            self.authorize_move_paths(&src_path, &dest).map_err(|e| {
+                RuntimeError::message(format!(
+                    "Failed to move '{}' to '{}': {}",
+                    src_path, dest, e
+                ))
+            })?;
+        let dest_checked_s = dest_checked.to_string_lossy().to_string();
 
         self.snapshot_if_atomic(&src_path)?;
-        self.snapshot_if_atomic(&dest)?;
+        self.snapshot_if_atomic(&dest_checked_s)?;
 
-        if matches!(op, PipeOp::Force) && target_path.exists() {
-            std::fs::remove_file(&target_path)
-                .map_err(|e| format!("Failed to replace '{}': {}", dest, e))?;
+        if matches!(op, PipeOp::Force) && dest_checked.exists() {
+            std::fs::remove_file(&dest_checked)
+                .map_err(|e| format!("Failed to replace '{}': {}", dest_checked_s, e))?;
         }
 
-        std::fs::rename(src, &target_path)
-            .map_err(|e| format!("Failed to move '{}' to '{}': {}", src_path, dest, e))?;
+        std::fs::rename(src_checked, &dest_checked).map_err(|e| {
+            format!(
+                "Failed to move '{}' to '{}': {}",
+                src_path, dest_checked_s, e
+            )
+        })?;
 
-        Ok(Value::Path(dest))
+        Ok(Value::Path(dest_checked_s))
     }
 
     pub(crate) fn begin_atomic(&mut self) -> RuntimeResult<()> {
@@ -281,6 +254,105 @@ impl Runtime {
         }
         self.atomic_active = false;
         Ok(())
+    }
+
+    pub(crate) fn read_text_path(&mut self, raw_path: &str) -> RuntimeResult<String> {
+        let path =
+            self.authorize_existing_path(Capability::Read, AuditOperation::Read, raw_path)?;
+        let meta = std::fs::metadata(&path).map_err(|e| {
+            RuntimeError::message(format!("Failed to stat '{}': {}", path.display(), e))
+        })?;
+        self.ensure_file_size_within_limit(&path.to_string_lossy(), meta.len())?;
+        std::fs::read_to_string(&path).map_err(|e| {
+            RuntimeError::message(format!("Failed to read '{}': {}", path.display(), e))
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn read_bytes_path(&mut self, raw_path: &str) -> RuntimeResult<Vec<u8>> {
+        let path =
+            self.authorize_existing_path(Capability::Read, AuditOperation::Read, raw_path)?;
+        let meta = std::fs::metadata(&path).map_err(|e| {
+            RuntimeError::message(format!("Failed to stat '{}': {}", path.display(), e))
+        })?;
+        self.ensure_file_size_within_limit(&path.to_string_lossy(), meta.len())?;
+        std::fs::read(&path).map_err(|e| {
+            RuntimeError::message(format!("Failed to read '{}': {}", path.display(), e))
+        })
+    }
+
+    pub(crate) fn write_path(&mut self, raw_path: &str, content: &str) -> RuntimeResult<()> {
+        let path = self.authorize_new_path(Capability::Write, AuditOperation::Write, raw_path)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RuntimeError::message(format!(
+                    "Failed to create directory '{}': {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+        std::fs::write(&path, content).map_err(|e| {
+            RuntimeError::message(format!("Failed to write '{}': {}", path.display(), e))
+        })
+    }
+
+    pub(crate) fn append_path(&mut self, raw_path: &str, content: &str) -> RuntimeResult<()> {
+        let path = self.authorize_new_path(Capability::Write, AuditOperation::Write, raw_path)?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RuntimeError::message(format!(
+                    "Failed to create directory '{}': {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+
+        use std::io::{Read, Seek, SeekFrom, Write};
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&path)
+            .map_err(|e| {
+                RuntimeError::message(format!("Failed to open '{}': {}", path.display(), e))
+            })?;
+
+        let mut needs_newline = false;
+        if let Ok(meta) = file.metadata()
+            && meta.len() > 0
+            && file.seek(SeekFrom::End(-1)).is_ok()
+        {
+            let mut buf = [0; 1];
+            if file.read_exact(&mut buf).is_ok() && buf[0] != b'\n' {
+                needs_newline = true;
+            }
+        }
+        if needs_newline {
+            file.write_all(b"\n").map_err(|e| {
+                RuntimeError::message(format!("Failed to append '{}': {}", path.display(), e))
+            })?;
+        }
+        file.write_all(content.as_bytes()).map_err(|e| {
+            RuntimeError::message(format!("Failed to append '{}': {}", path.display(), e))
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn create_dir_all_checked(&mut self, raw_path: &Path) -> RuntimeResult<()> {
+        let path = self.authorize_new_path(
+            Capability::Write,
+            AuditOperation::Write,
+            &raw_path.to_string_lossy(),
+        )?;
+        std::fs::create_dir_all(&path).map_err(|e| {
+            RuntimeError::message(format!(
+                "Failed to create directory '{}': {}",
+                path.display(),
+                e
+            ))
+        })
     }
 }
 fn csv_escape(value: &str) -> String {

@@ -71,5 +71,5 @@ pub const BUILTIN_DIRECTIVES: &[BuiltinDirectiveSpec] = &[
 ];
 
 pub fn is_known_runtime_directive(name: &str) -> bool {
-    BUILTIN_DIRECTIVES.iter().any(|dir| dir.name == name) || name.ends_with(".parse")
+    BUILTIN_DIRECTIVES.iter().any(|dir| dir.name == name)
 }

@@ -233,7 +233,7 @@ impl LanguageServer for Backend {
                                     break;
                                 } else if imp.alias.is_none() {
                                     let stem = imp.path.rsplit('/').next().unwrap_or(&imp.path);
-                                    let stem = stem.split('.').last().unwrap_or(&imp.path);
+                                    let stem = stem.split('.').next_back().unwrap_or(&imp.path);
                                     if stem == module_name {
                                         resolved_module = imp.path;
                                         break;
@@ -260,13 +260,13 @@ impl LanguageServer for Backend {
                     }
 
                     for path in possible_paths {
-                        if path.is_file() {
-                            if let Ok(target_uri) = Url::from_file_path(&path) {
-                                return Ok(Some(GotoDefinitionResponse::Scalar(Location {
-                                    uri: target_uri,
-                                    range: Range::default(),
-                                })));
-                            }
+                        if path.is_file()
+                            && let Ok(target_uri) = Url::from_file_path(&path)
+                        {
+                            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                                uri: target_uri,
+                                range: Range::default(),
+                            })));
                         }
                     }
                 }
@@ -320,52 +320,51 @@ impl LanguageServer for Backend {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
 
-        if let Some(text) = self.documents.read().await.get(&uri.to_string()) {
-            if let Some((name, param_index)) =
+        if let Some(text) = self.documents.read().await.get(&uri.to_string())
+            && let Some((name, param_index)) =
                 get_signature_context(text, position.line, position.character)
-            {
-                let mut stripped_name = name.clone();
-                stripped_name = stripped_name
-                    .strip_prefix('@')
-                    .unwrap_or(&stripped_name)
-                    .to_string();
+        {
+            let mut stripped_name = name.clone();
+            stripped_name = stripped_name
+                .strip_prefix('@')
+                .unwrap_or(&stripped_name)
+                .to_string();
 
-                for dir in DIRECTIVES {
-                    if dir.name == stripped_name {
-                        let sig = SignatureInformation {
-                            label: dir.signature.to_string(),
-                            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                                kind: MarkupKind::Markdown,
-                                value: dir.description.to_string(),
-                            })),
-                            parameters: None,
-                            active_parameter: Some(param_index),
-                        };
-                        return Ok(Some(SignatureHelp {
-                            signatures: vec![sig],
-                            active_signature: Some(0),
-                            active_parameter: Some(param_index),
-                        }));
-                    }
+            for dir in DIRECTIVES {
+                if dir.name == stripped_name {
+                    let sig = SignatureInformation {
+                        label: dir.signature.to_string(),
+                        documentation: Some(Documentation::MarkupContent(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: dir.description.to_string(),
+                        })),
+                        parameters: None,
+                        active_parameter: Some(param_index),
+                    };
+                    return Ok(Some(SignatureHelp {
+                        signatures: vec![sig],
+                        active_signature: Some(0),
+                        active_parameter: Some(param_index),
+                    }));
                 }
+            }
 
-                for (func_name, sig, desc) in BUILTIN_FUNCTIONS {
-                    if *func_name == stripped_name {
-                        let sig_info = SignatureInformation {
-                            label: sig.to_string(),
-                            documentation: Some(Documentation::MarkupContent(MarkupContent {
-                                kind: MarkupKind::Markdown,
-                                value: desc.to_string(),
-                            })),
-                            parameters: None,
-                            active_parameter: Some(param_index),
-                        };
-                        return Ok(Some(SignatureHelp {
-                            signatures: vec![sig_info],
-                            active_signature: Some(0),
-                            active_parameter: Some(param_index),
-                        }));
-                    }
+            for (func_name, sig, desc) in BUILTIN_FUNCTIONS {
+                if *func_name == stripped_name {
+                    let sig_info = SignatureInformation {
+                        label: sig.to_string(),
+                        documentation: Some(Documentation::MarkupContent(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: desc.to_string(),
+                        })),
+                        parameters: None,
+                        active_parameter: Some(param_index),
+                    };
+                    return Ok(Some(SignatureHelp {
+                        signatures: vec![sig_info],
+                        active_signature: Some(0),
+                        active_parameter: Some(param_index),
+                    }));
                 }
             }
         }

@@ -3,6 +3,7 @@ use crate::runtime::Runtime;
 use crate::runtime::env::Value;
 use crate::runtime::error::{RuntimeError, RuntimeResult};
 use log::warn;
+use std::time::Instant;
 
 impl Runtime {
     pub fn execute_flow<'a>(
@@ -10,11 +11,12 @@ impl Runtime {
         flow: &'a PipeFlow,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
+            let started_at = Instant::now();
             let atomic_was_active_before_source = self.atomic_active;
-            if let Source::Directive(directive) = &flow.source {
-                if directive.name == "watch" {
-                    return self.execute_watch_flow(flow, directive).await;
-                }
+            if let Source::Directive(directive) = &flow.source
+                && directive.name == "watch"
+            {
+                return self.execute_watch_flow(flow, directive).await;
             }
 
             // Evaluate the source
@@ -27,16 +29,18 @@ impl Runtime {
                     return Err(e);
                 }
             };
+            self.enforce_timeout_budget(started_at, "flow source")?;
+            self.enforce_memory_limit(&current_value, "flow source")?;
             let atomic_started_here = !atomic_was_active_before_source && self.atomic_active;
 
             // Bind alias if source is a FunctionCall with `as`
-            if let Source::FunctionCall(call) = &flow.source {
-                if let Some(alias) = &call.alias {
-                    self.env.set(alias, current_value.clone());
-                }
+            if let Source::FunctionCall(call) = &flow.source
+                && let Some(alias) = &call.alias
+            {
+                self.env.set(alias, current_value.clone());
             }
 
-            self.run_flow_operations(flow, current_value, atomic_started_here)
+            self.run_flow_operations(flow, current_value, atomic_started_here, started_at)
                 .await
         })
     }
@@ -46,6 +50,7 @@ impl Runtime {
         flow: &'a PipeFlow,
         mut current_value: Value,
         atomic_started_here_initial: bool,
+        started_at: Instant,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut atomic_started_here = atomic_started_here_initial;
@@ -65,6 +70,8 @@ impl Runtime {
                 match result {
                     Ok(val) => {
                         current_value = val;
+                        self.enforce_timeout_budget(started_at, "flow operation")?;
+                        self.enforce_memory_limit(&current_value, "flow operation")?;
                     }
                     Err(e) => {
                         if atomic_started_here {
@@ -72,11 +79,17 @@ impl Runtime {
                         }
                         match op {
                             PipeOp::Force => {
+                                if is_force_blocking_error(&e) {
+                                    return Err(e);
+                                }
                                 warn!("force pipe ignored downstream error: {}", e);
                                 current_value = force_backup
                                     .expect("force backup must exist for force operation");
                             }
                             PipeOp::Safe | PipeOp::Move => {
+                                if matches!(e, RuntimeError::FilterRejected) {
+                                    return Err(e);
+                                }
                                 if let Some(on_fail) = &flow.on_fail {
                                     return self.handle_on_fail(on_fail, &e).await;
                                 }
@@ -227,10 +240,10 @@ impl Runtime {
         input: &'a Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
-            if flow.operations.is_empty() {
-                if let Source::Expression(Expression::Literal(Literal::Path(path))) = &flow.source {
-                    return self.write_or_move_path(&PipeOp::Safe, path, input);
-                }
+            if flow.operations.is_empty()
+                && let Source::Expression(Expression::Literal(Literal::Path(path))) = &flow.source
+            {
+                return self.write_or_move_path(&PipeOp::Safe, path, input);
             }
             let mut current_value = self
                 .eval_branch_source_with_input(&flow.source, input)
@@ -280,4 +293,8 @@ impl Runtime {
             }
         })
     }
+}
+
+fn is_force_blocking_error(error: &RuntimeError) -> bool {
+    error.is_security_denial()
 }

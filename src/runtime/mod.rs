@@ -6,7 +6,9 @@ mod eval;
 pub mod fs;
 mod functions;
 mod imports;
+mod limits;
 mod pipeline;
+pub mod security;
 mod watch;
 
 mod atomic;
@@ -14,4 +16,4 @@ mod execution;
 mod state;
 
 pub(crate) use state::ModuleLoader;
-pub use state::Runtime;
+pub use state::{Runtime, RuntimeLimits, WatchDropPolicy};

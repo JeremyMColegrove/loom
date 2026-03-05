@@ -22,14 +22,21 @@ impl Runtime {
             let import_path = self.resolve_import_path(path_str)?;
             let import_key = import_path.to_string_lossy().to_string();
 
-            let cached_exports = { self.module_loader.borrow().cache.get(&import_key).cloned() };
+            let cached_exports = {
+                self.module_loader
+                    .read()
+                    .await
+                    .cache
+                    .get(&import_key)
+                    .cloned()
+            };
             if let Some(exports) = cached_exports {
                 self.bind_module_alias(import, exports);
                 return Ok(());
             }
 
             {
-                let mut loader = self.module_loader.borrow_mut();
+                let mut loader = self.module_loader.write().await;
                 if loader.loading.contains(&import_key) {
                     return Err(RuntimeError::message(format!(
                         "Cyclic import detected for '{}'",
@@ -39,16 +46,29 @@ impl Runtime {
                 loader.loading.insert(import_key.clone());
             }
 
-            let content = std::fs::read_to_string(&import_path)
-                .map_err(|e| format!("Failed to read module: {}", e))?;
+            let content = match self.read_text_path(&import_key) {
+                Ok(content) => content,
+                Err(err) => {
+                    self.module_loader.write().await.loading.remove(&import_key);
+                    return Err(err);
+                }
+            };
 
-            let parsed = crate::parser::parse(&content).map_err(|errors| {
-                let msgs: Vec<String> = errors
-                    .iter()
-                    .map(|e| format!("  Line {}:{} — {}", e.line, e.col, e.message))
-                    .collect();
-                format!("Parse errors in '{}':\n{}", import.path, msgs.join("\n"))
-            })?;
+            let parsed = match crate::parser::parse(&content) {
+                Ok(parsed) => parsed,
+                Err(errors) => {
+                    self.module_loader.write().await.loading.remove(&import_key);
+                    let msgs: Vec<String> = errors
+                        .iter()
+                        .map(|e| format!("  Line {}:{} — {}", e.line, e.col, e.message))
+                        .collect();
+                    return Err(RuntimeError::message(format!(
+                        "Parse errors in '{}':\n{}",
+                        import.path,
+                        msgs.join("\n")
+                    )));
+                }
+            };
 
             // Execute in an isolated runtime
             let mut isolated_runtime = Runtime::new();
@@ -60,18 +80,20 @@ impl Runtime {
             if !parent_dir.is_empty() {
                 isolated_runtime = isolated_runtime.with_script_dir(&parent_dir);
             }
+            isolated_runtime.set_security_policy(self.security_policy.clone())?;
+            isolated_runtime.set_trust_mode(self.trust_mode);
             isolated_runtime.module_loader = self.module_loader.clone();
 
             let execute_result = isolated_runtime.execute(&parsed).await;
             if let Err(e) = execute_result {
-                self.module_loader.borrow_mut().loading.remove(&import_key);
+                self.module_loader.write().await.loading.remove(&import_key);
                 return Err(RuntimeError::message(e));
             }
 
             // Extract the global namespace of the module
             let exports = isolated_runtime.env.extract_globals();
             {
-                let mut loader = self.module_loader.borrow_mut();
+                let mut loader = self.module_loader.write().await;
                 loader.loading.remove(&import_key);
                 loader.cache.insert(import_key.clone(), exports.clone());
             }
@@ -86,7 +108,7 @@ impl Runtime {
         })
     }
 
-    fn resolve_import_path(&self, path_str: &str) -> RuntimeResult<PathBuf> {
+    fn resolve_import_path(&mut self, path_str: &str) -> RuntimeResult<PathBuf> {
         let base_dir = self.script_dir.clone().unwrap_or_default();
 
         // Try the path as-is first, then with dots replaced by path separators.
@@ -99,22 +121,23 @@ impl Runtime {
             if p.extension().is_none() {
                 p.set_extension("loom");
             }
-            if p.exists() {
-                import_path = Some(p);
-                break;
+            match self.authorize_import_path(&p.to_string_lossy()) {
+                Ok(authorized) => {
+                    import_path = Some(authorized);
+                    break;
+                }
+                Err(err) => {
+                    if err.is_security_denial() {
+                        return Err(err);
+                    }
+                }
             }
         }
 
         let import_path = import_path.ok_or_else(|| {
             RuntimeError::message(format!("Import module not found: {}", path_str))
         })?;
-        std::fs::canonicalize(&import_path).map_err(|e| {
-            RuntimeError::message(format!(
-                "Failed to resolve module path '{}': {}",
-                import_path.display(),
-                e
-            ))
-        })
+        Ok(import_path)
     }
 
     fn bind_module_alias(&mut self, import: &ImportStmt, exports: HashMap<String, Value>) {

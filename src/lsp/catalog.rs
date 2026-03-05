@@ -22,6 +22,11 @@ pub(crate) const DIRECTIVES: &[DirectiveInfo] = &[
         description: "Splits the input into chunks of the given size (e.g. `\"5mb\"`). Returns chunk records.",
     },
     DirectiveInfo {
+        name: "lines",
+        signature: "@lines(path?)",
+        description: "Reads a file line-by-line into a list of strings. Uses piped input when no argument is provided.",
+    },
+    DirectiveInfo {
         name: "csv.parse",
         signature: "@csv.parse(data)",
         description: "Parses CSV data into records. Returns a record with `source`, `valid`, and `rows` fields.",
@@ -40,6 +45,16 @@ pub(crate) const DIRECTIVES: &[DirectiveInfo] = &[
         name: "write",
         signature: "@write(path)",
         description: "Writes the current pipe value to a file at the given path.",
+    },
+    DirectiveInfo {
+        name: "filter",
+        signature: "@filter(predicate)",
+        description: "Directive form of `filter(...)` for piped list values.",
+    },
+    DirectiveInfo {
+        name: "map",
+        signature: "@map(transform)",
+        description: "Directive form of `map(...)` for piped list values.",
     },
     DirectiveInfo {
         name: "import",

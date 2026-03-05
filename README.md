@@ -62,6 +62,12 @@ To run a Loom script directly:
 ./target/release/loom my_script.loom
 ```
 
+Loom runs in strict mode by default. Use `--no-strict` to opt out:
+
+```bash
+./target/release/loom --no-strict my_script.loom
+```
+
 To start the built-in Language Server for your code editor (if not using the official extension):
 
 ```bash
