@@ -1,0 +1,167 @@
+{
+  "Watch Flow": {
+    "prefix": "watch",
+    "body": [
+      "@watch(\"${1:./path/}\") as ${2:event} >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Creates a @watch directive that observes a file or directory for changes."
+  },
+  "Watch with Atomic": {
+    "prefix": "watchatomic",
+    "body": [
+      "@watch(\"${1:./path/}\") as ${2:event} >> @atomic >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Creates a @watch with @atomic transaction wrapping."
+  },
+  "Watch Atomic with Error Handling": {
+    "prefix": "watchfull",
+    "body": [
+      "@watch(\"${1:./path/}\") as ${2:event} >> @atomic >> [",
+      "\t$0",
+      "] on_fail as ${3:err} >> [",
+      "\t${4:// error handling}",
+      "]"
+    ],
+    "description": "Full @watch pipeline with @atomic and on_fail error handling."
+  },
+  "Atomic Block": {
+    "prefix": "atomic",
+    "body": [
+      "@atomic >> [",
+      "\t$0",
+      "] on_fail as ${1:err} >> [",
+      "\t${2:// rollback / error handling}",
+      "]"
+    ],
+    "description": "Creates an @atomic block with on_fail error handler."
+  },
+  "Filter": {
+    "prefix": "filter",
+    "body": [
+      "filter(${1:row} >> ${2:condition})"
+    ],
+    "description": "Filter items using a lambda predicate."
+  },
+  "Filter with Branch": {
+    "prefix": "filterbranch",
+    "body": [
+      "filter(${1:row} >> ${2:condition}) >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Filter items and pipe results into a branch."
+  },
+  "Filter as Binding": {
+    "prefix": "filteras",
+    "body": [
+      "filter(${1:row} >> ${2:condition}) as ${3:data} >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Filter items with an alias binding into a branch."
+  },
+  "Map": {
+    "prefix": "map",
+    "body": [
+      "map(${1:item} >> ${2:transform})"
+    ],
+    "description": "Transform each item using a lambda."
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "@import \"${1:module}\" as ${2:alias}"
+    ],
+    "description": "Import a module with an alias."
+  },
+  "Import Standard Library": {
+    "prefix": "importstd",
+    "body": [
+      "@import \"std.${1:csv}\" as ${2:csv}"
+    ],
+    "description": "Import a standard library module."
+  },
+  "Read and Parse CSV": {
+    "prefix": "csvparse",
+    "body": [
+      "@read(${1:path}) >> @csv.parse as ${2:data} >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Read a file and parse it as CSV data."
+  },
+  "Branch": {
+    "prefix": "branch",
+    "body": [
+      "[",
+      "\t${1:// branch A},",
+      "\t${2:// branch B}",
+      "]"
+    ],
+    "description": "Creates a branch with multiple parallel flows."
+  },
+  "On Fail": {
+    "prefix": "onfail",
+    "body": [
+      "on_fail as ${1:err} >> [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Error handler block that catches errors from the preceding pipe flow."
+  },
+  "Pipe to File": {
+    "prefix": "writefile",
+    "body": [
+      "${1:source} >> \"${2:output.txt}\""
+    ],
+    "description": "Pipe a value into a file."
+  },
+  "Read File": {
+    "prefix": "read",
+    "body": [
+      "@read(${1:path})"
+    ],
+    "description": "Reads the contents of a file."
+  },
+  "Write File": {
+    "prefix": "write",
+    "body": [
+      "@write(\"${1:path}\")"
+    ],
+    "description": "Writes the current pipe value to a file."
+  },
+  "Chunk": {
+    "prefix": "chunk",
+    "body": [
+      "@chunk(\"${1:5mb}\", ${2:source})"
+    ],
+    "description": "Splits input into chunks of a given size."
+  },
+  "Function Definition": {
+    "prefix": "fn",
+    "body": [
+      "${1:name}(${2:params}) => ${3:body}"
+    ],
+    "description": "Define a reusable function."
+  },
+  "Function Definition with Branch": {
+    "prefix": "fnbranch",
+    "body": [
+      "${1:name}(${2:params}) => [",
+      "\t$0",
+      "]"
+    ],
+    "description": "Define a function with a branch body."
+  },
+  "Log": {
+    "prefix": "log",
+    "body": [
+      "@log"
+    ],
+    "description": "Logs the current pipe value to stdout."
+  }
+}

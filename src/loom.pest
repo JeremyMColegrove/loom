@@ -1,0 +1,51 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = { "//" ~ (!"\n" ~ ANY)* }
+
+Program = { SOI ~ Statement* ~ EOI }
+Statement = { ImportStmt | FunctionDef | PipeFlow }
+
+ImportStmt = { "@import" ~ PathLiteral ~ ("as" ~ Identifier)? }
+
+FunctionDef = { Identifier ~ "(" ~ ParamList? ~ ")" ~ "=>" ~ FlowOrBranch }
+ParamList = { Identifier ~ ("," ~ Identifier)* }
+
+PipeFlow = { Source ~ (PipeOp ~ Destination)* ~ ("on_fail" ~ ("as" ~ Identifier)? ~ PipeOp? ~ FlowOrBranch)? }
+
+PipeOp = { ">>>" | ">>" | "->" }
+
+Source = { DirectiveFlow | FunctionCall | NonLambdaExpression }
+
+Destination = { Branch | DirectiveFlow | FunctionCall | NonLambdaExpression }
+
+CallableName = @{ Identifier ~ ("." ~ Identifier)* }
+FunctionCall = { CallableName ~ "(" ~ Arguments? ~ ")" ~ ("as" ~ Identifier)? }
+
+DirectiveName = @{ Identifier ~ ("." ~ Identifier)* }
+
+DirectiveFlow = { "@" ~ DirectiveName ~ ("(" ~ Arguments? ~ ")")? ~ ("as" ~ Identifier)? }
+
+Branch = { "[" ~ (PipeFlow ~ ("," ~ PipeFlow)*)? ~ "]" }
+
+FlowOrBranch = { Branch | PipeFlow }
+
+Arguments = { Expression ~ ("," ~ Expression)* }
+
+Expression = { Lambda | BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier }
+NonLambdaExpression = { BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier }
+
+Lambda = { Identifier ~ ">>" ~ (BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier) }
+BinExpr = { (FunctionCall | MemberAccess | Literal | Identifier) ~ Operator ~ Expression }
+UnaryExpr = { "!" ~ (FunctionCall | MemberAccess | Identifier) }
+MemberAccess = { Identifier ~ ("." ~ Identifier)+ }
+
+Operator = { "&&" | "||" | ">=" | "<=" | "==" | "!=" | ">" | "<" | "+" | "-" | "*" | "/" }
+
+Literal = { StringLiteral | PathLiteral | Number | Boolean }
+Number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+Boolean = { "true" | "false" }
+
+StringLiteral = ${ "s\"" ~ InnerStr ~ "\"" }
+PathLiteral = ${ "\"" ~ InnerStr ~ "\"" }
+InnerStr = @{ (!"\"" ~ ANY)* }
+
+Identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
