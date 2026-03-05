@@ -1,3 +1,4 @@
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -119,13 +120,17 @@ impl AtomicTransaction {
     }
 }
 
-
-use crate::runtime::Runtime;
 use crate::ast::PipeOp;
+use crate::runtime::Runtime;
 use crate::runtime::env::Value;
 
 impl Runtime {
-    pub(crate) fn write_or_move_path(&mut self, op: &PipeOp, raw_target: &str, pipe_val: &Value) -> Result<Value, String> {
+    pub(crate) fn write_or_move_path(
+        &mut self,
+        op: &PipeOp,
+        raw_target: &str,
+        pipe_val: &Value,
+    ) -> Result<Value, String> {
         if matches!(op, PipeOp::Move) {
             return self.move_file(raw_target, pipe_val, op);
         }
@@ -141,16 +146,14 @@ impl Runtime {
             _ => self.serialize_for_path_output(pipe_val),
         };
 
-
-
         self.snapshot_if_atomic(raw_target)?;
         match op {
             PipeOp::Safe => {
                 if payload.is_empty() {
                     return Ok(Value::Path(raw_target.to_string()));
                 }
-                
-                println!("  📁 Appending to: {}", raw_target);
+
+                debug!("appending output to {}", raw_target);
                 let mut file = std::fs::OpenOptions::new()
                     .create(true)
                     .read(true)
@@ -158,7 +161,7 @@ impl Runtime {
                     .open(raw_target)
                     .map_err(|e| format!("Failed to open '{}': {}", raw_target, e))?;
                 use std::io::{Read, Seek, SeekFrom, Write};
-                
+
                 let mut needs_newline = false;
                 if let Ok(meta) = file.metadata() {
                     if meta.len() > 0 {
@@ -170,21 +173,21 @@ impl Runtime {
                         }
                     }
                 }
-                
+
                 if needs_newline {
                     let _ = file.write_all(b"\n");
                 }
-                
+
                 let mut bytes = payload.into_bytes();
                 if !bytes.ends_with(b"\n") {
                     bytes.push(b'\n');
                 }
-                
+
                 file.write_all(&bytes)
                     .map_err(|e| format!("Failed to append '{}': {}", raw_target, e))?;
             }
             PipeOp::Force => {
-                println!("  📁 Overwriting: {}", raw_target);
+                debug!("overwriting output at {}", raw_target);
                 std::fs::write(raw_target, payload)
                     .map_err(|e| format!("Failed to write '{}': {}", raw_target, e))?;
             }
@@ -203,13 +206,12 @@ impl Runtime {
         match value {
             Value::Record(map) => {
                 if let Some(Value::List(rows)) = map.get("rows") {
-                    let preferred_headers = map.get("headers")
-                        .and_then(|h| match h {
-                            Value::List(items) => Some(items.iter()
-                                .map(|v| v.as_string())
-                                .collect::<Vec<_>>()),
-                            _ => None,
-                        });
+                    let preferred_headers = map.get("headers").and_then(|h| match h {
+                        Value::List(items) => {
+                            Some(items.iter().map(|v| v.as_string()).collect::<Vec<_>>())
+                        }
+                        _ => None,
+                    });
                     return self.serialize_records_as_csv(rows, preferred_headers.as_deref());
                 }
                 None
@@ -219,7 +221,11 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn serialize_records_as_csv(&self, rows: &[Value], preferred_headers: Option<&[String]>) -> Option<String> {
+    pub(crate) fn serialize_records_as_csv(
+        &self,
+        rows: &[Value],
+        preferred_headers: Option<&[String]>,
+    ) -> Option<String> {
         if rows.is_empty() {
             return Some(String::new());
         }
@@ -227,9 +233,7 @@ impl Runtime {
             return None;
         }
 
-        let mut headers: Vec<String> = preferred_headers
-            .map(|h| h.to_vec())
-            .unwrap_or_default();
+        let mut headers: Vec<String> = preferred_headers.map(|h| h.to_vec()).unwrap_or_default();
         let mut seen = std::collections::HashSet::new();
         for h in &headers {
             seen.insert(h.to_ascii_lowercase());
@@ -252,11 +256,18 @@ impl Runtime {
         }
 
         let mut out = String::new();
-        out.push_str(&headers.iter().map(|h| csv_escape(h)).collect::<Vec<_>>().join(","));
+        out.push_str(
+            &headers
+                .iter()
+                .map(|h| csv_escape(h))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
         out.push('\n');
         for row in rows {
             let Value::Record(map) = row else { continue };
-            let line = headers.iter()
+            let line = headers
+                .iter()
                 .map(|h| {
                     map.iter()
                         .find(|(k, _)| k.eq_ignore_ascii_case(h))
@@ -276,14 +287,20 @@ impl Runtime {
         target.ends_with('/') || Path::new(target).is_dir()
     }
 
-    pub(crate) fn move_file(&mut self, raw_target: &str, pipe_val: &Value, op: &PipeOp) -> Result<Value, String> {
+    pub(crate) fn move_file(
+        &mut self,
+        raw_target: &str,
+        pipe_val: &Value,
+        op: &PipeOp,
+    ) -> Result<Value, String> {
         let src_path = match pipe_val.as_path() {
             Some(p) => p.to_string(),
             None => return Err("Move targets require a file path source".to_string()),
         };
 
         let src = Path::new(&src_path);
-        let file_name = src.file_name()
+        let file_name = src
+            .file_name()
             .ok_or_else(|| format!("Source path has no file name: '{}'", src_path))?;
 
         let mut target_path = std::path::PathBuf::from(raw_target);
@@ -294,13 +311,19 @@ impl Runtime {
         }
 
         if self.is_directory_target(raw_target) {
-            std::fs::create_dir_all(&target_path)
-                .map_err(|e| format!("Failed to create directory '{}': {}", target_path.display(), e))?;
+            std::fs::create_dir_all(&target_path).map_err(|e| {
+                format!(
+                    "Failed to create directory '{}': {}",
+                    target_path.display(),
+                    e
+                )
+            })?;
             target_path = target_path.join(file_name);
         } else {
             if let Some(parent) = target_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create directory '{}': {}", parent.display(), e))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    format!("Failed to create directory '{}': {}", parent.display(), e)
+                })?;
             }
         }
 
@@ -324,14 +347,17 @@ impl Runtime {
         let base = if let Some(dir) = &self.script_dir {
             Path::new(dir).to_path_buf()
         } else {
-            std::env::current_dir().map_err(|e| format!("Failed to resolve current directory: {}", e))?
+            std::env::current_dir()
+                .map_err(|e| format!("Failed to resolve current directory: {}", e))?
         };
         if self.atomic_context.is_none() {
             self.atomic_context = Some(
-                AtomicContext::new(base).map_err(|e| format!("Failed to initialize atomic journal: {}", e))?
+                AtomicContext::new(base)
+                    .map_err(|e| format!("Failed to initialize atomic journal: {}", e))?,
             );
         }
-        let txn = self.atomic_context
+        let txn = self
+            .atomic_context
             .as_ref()
             .ok_or_else(|| "Atomic context unavailable".to_string())?
             .begin()
@@ -371,13 +397,10 @@ impl Runtime {
     }
 }
 fn csv_escape(value: &str) -> String {
-    let needs_quotes = value.contains(',')
-        || value.contains('"')
-        || value.contains('\n')
-        || value.contains('\r');
+    let needs_quotes =
+        value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r');
     if !needs_quotes {
         return value.to_string();
     }
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-

@@ -1,12 +1,12 @@
+use crate::ast::{Expression, FlowOrBranch, Program, Source, Span, Statement};
+use crate::formatter::Formatter;
+use crate::parser::parse;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
-use crate::ast::{Expression, FlowOrBranch, Program, Source, Span, Statement};
-use crate::formatter::Formatter;
-use crate::parser::parse;
 
 #[derive(Debug)]
 pub struct Backend {
@@ -22,30 +22,121 @@ struct DirectiveInfo {
 }
 
 const DIRECTIVES: &[DirectiveInfo] = &[
-    DirectiveInfo { name: "watch",     signature: "@watch(path)",              description: "Watches a file or directory for changes. Returns an event record with `file`, `path`, and `type` fields." },
-    DirectiveInfo { name: "atomic",    signature: "@atomic",                   description: "Wraps subsequent operations in a transaction. If any step fails, all changes are rolled back." },
-    DirectiveInfo { name: "chunk",     signature: "@chunk(size, source)",      description: "Splits the input into chunks of the given size (e.g. `\"5mb\"`). Returns chunk records." },
-    DirectiveInfo { name: "csv.parse", signature: "@csv.parse(data)",          description: "Parses CSV data into records. Returns a record with `source`, `valid`, and `rows` fields." },
-    DirectiveInfo { name: "log",       signature: "@log",                      description: "Logs the current pipe value to stdout. Passes the value through unchanged." },
-    DirectiveInfo { name: "read",      signature: "@read(path)",               description: "Reads the contents of a file and returns it as a string." },
-    DirectiveInfo { name: "write",     signature: "@write(path)",              description: "Writes the current pipe value to a file at the given path." },
-    DirectiveInfo { name: "import",    signature: "@import \"path\" [as alias]", description: "Imports functions and definitions from another Loom file." },
+    DirectiveInfo {
+        name: "watch",
+        signature: "@watch(path, recursive?, debounce_ms?)",
+        description: "Watches a file or directory using filesystem events. Optional args enable recursive mode and debounce in milliseconds. Returns an event record with `file`, `path`, and `type` fields.",
+    },
+    DirectiveInfo {
+        name: "atomic",
+        signature: "@atomic",
+        description: "Wraps subsequent operations in a transaction. If any step fails, all changes are rolled back.",
+    },
+    DirectiveInfo {
+        name: "chunk",
+        signature: "@chunk(size, source)",
+        description: "Splits the input into chunks of the given size (e.g. `\"5mb\"`). Returns chunk records.",
+    },
+    DirectiveInfo {
+        name: "csv.parse",
+        signature: "@csv.parse(data)",
+        description: "Parses CSV data into records. Returns a record with `source`, `valid`, and `rows` fields.",
+    },
+    DirectiveInfo {
+        name: "log",
+        signature: "@log",
+        description: "Logs the current pipe value to stdout. Passes the value through unchanged.",
+    },
+    DirectiveInfo {
+        name: "read",
+        signature: "@read(path)",
+        description: "Reads the contents of a file and returns it as a string.",
+    },
+    DirectiveInfo {
+        name: "write",
+        signature: "@write(path)",
+        description: "Writes the current pipe value to a file at the given path.",
+    },
+    DirectiveInfo {
+        name: "import",
+        signature: "@import \"path\" [as alias]",
+        description: "Imports functions and definitions from another Loom file.",
+    },
 ];
 
 const KEYWORDS: &[(&str, &str)] = &[
-    ("on_fail", "Error handler block. Catches errors from the preceding pipe flow."),
-    ("as",      "Binds the result of a directive or on_fail to a named variable."),
-    ("true",    "Boolean literal true."),
-    ("false",   "Boolean literal false."),
+    (
+        "on_fail",
+        "Error handler block. Catches errors from the preceding pipe flow.",
+    ),
+    (
+        "as",
+        "Binds the result of a directive or on_fail to a named variable.",
+    ),
+    ("true", "Boolean literal true."),
+    ("false", "Boolean literal false."),
 ];
 
 const BUILTIN_FUNCTIONS: &[(&str, &str, &str)] = &[
-    ("filter", "filter(predicate)", "Filters items using a lambda predicate. E.g. `filter(r >> r.valid)`"),
-    ("map",    "map(transform)",    "Transforms each item using a lambda. E.g. `map(r >> r.name)`"),
-    ("print",  "print(value)",      "Prints a value to stdout."),
-    ("concat", "concat(a, b, ...)", "Concatenates values into a single string."),
-    ("exists", "exists(path)",      "Returns true if the file at path exists."),
+    (
+        "filter",
+        "filter(predicate)",
+        "Filters items using a lambda predicate. E.g. `filter(r >> r.valid)`",
+    ),
+    (
+        "map",
+        "map(transform)",
+        "Transforms each item using a lambda. E.g. `map(r >> r.name)`",
+    ),
+    ("print", "print(value)", "Prints a value to stdout."),
+    (
+        "concat",
+        "concat(a, b, ...)",
+        "Concatenates values into a single string.",
+    ),
+    (
+        "exists",
+        "exists(path)",
+        "Returns true if the file at path exists.",
+    ),
 ];
+
+fn utf16_col_to_byte_idx(line: &str, character: u32) -> usize {
+    let mut utf16_col = 0u32;
+    for (byte_idx, ch) in line.char_indices() {
+        if utf16_col >= character {
+            return byte_idx;
+        }
+        let next = utf16_col + ch.len_utf16() as u32;
+        if next > character {
+            return byte_idx;
+        }
+        utf16_col = next;
+    }
+    line.len()
+}
+
+fn utf16_col_to_char_idx(line: &str, character: u32) -> usize {
+    let mut utf16_col = 0u32;
+    let mut char_idx = 0usize;
+    for ch in line.chars() {
+        if utf16_col >= character {
+            return char_idx;
+        }
+        let next = utf16_col + ch.len_utf16() as u32;
+        if next > character {
+            return char_idx;
+        }
+        utf16_col = next;
+        char_idx += 1;
+    }
+    char_idx
+}
+
+fn byte_idx_to_utf16_col(line: &str, byte_idx: usize) -> u32 {
+    let clamped = byte_idx.min(line.len());
+    line[..clamped].chars().map(|c| c.len_utf16() as u32).sum()
+}
 
 fn get_word_at_position(text: &str, line: u32, character: u32) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -54,8 +145,8 @@ fn get_word_at_position(text: &str, line: u32, character: u32) -> String {
         return String::new();
     }
     let line_text = lines[line_idx];
-    let col = character as usize;
-    
+    let col = utf16_col_to_char_idx(line_text, character);
+
     // Walk backwards to find start of word (including @ and .)
     let chars: Vec<char> = line_text.chars().collect();
     let mut start = col;
@@ -87,8 +178,8 @@ fn get_context_at_position(text: &str, line: u32, character: u32) -> CompletionC
         return CompletionContext::General;
     }
     let line_text = lines[line_idx];
-    let col = character as usize;
-    let before_cursor = &line_text[..col.min(line_text.len())];
+    let col = utf16_col_to_byte_idx(line_text, character);
+    let before_cursor = &line_text[..col];
     let trimmed = before_cursor.trim_start();
 
     // Check if we're inside a string literal
@@ -105,7 +196,10 @@ fn get_context_at_position(text: &str, line: u32, character: u32) -> CompletionC
     // Check if typing a directive name after @
     if let Some(at_pos) = before_cursor.rfind('@') {
         let after_at = &before_cursor[at_pos + 1..];
-        if after_at.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '_') {
+        if after_at
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+        {
             return CompletionContext::Directive;
         }
     }
@@ -117,15 +211,21 @@ fn get_context_at_position(text: &str, line: u32, character: u32) -> CompletionC
 
     // Check if after >> (pipe destination)
     if trimmed.contains(">>") {
-        let last_pipe = trimmed.rfind(">>").unwrap();
-        let after_pipe = trimmed[last_pipe + 2..].trim();
-        if after_pipe.is_empty() || after_pipe.chars().all(|c| c.is_alphanumeric() || c == '_') {
-            return CompletionContext::PipeDestination;
+        if let Some(last_pipe) = trimmed.rfind(">>") {
+            let after_pipe = trimmed[last_pipe + 2..].trim();
+            if after_pipe.is_empty() || after_pipe.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return CompletionContext::PipeDestination;
+            }
         }
     }
 
     // Check if at start of line (source position)
-    if trimmed.is_empty() || trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '@') {
+    if trimmed.is_empty()
+        || trimmed
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '@')
+    {
         return CompletionContext::Source;
     }
 
@@ -160,34 +260,40 @@ fn lsp_range_from_span(span: Span) -> Range {
     }
 }
 
-fn find_expression_symbol_at_pos<'a>(expr: &'a Expression, pos: Position) -> Option<SymbolAtPos<'a>> {
+fn find_expression_symbol_at_pos<'a>(
+    expr: &'a Expression,
+    pos: Position,
+) -> Option<SymbolAtPos<'a>> {
     match expr {
         Expression::FunctionCall(call) => {
             if call.span.contains_zero_based(pos.line, pos.character) {
-                Some(SymbolAtPos {
-                    name: &call.name,
-                })
+                Some(SymbolAtPos { name: &call.name })
             } else {
                 None
             }
         }
         Expression::Lambda(lambda) => find_expression_symbol_at_pos(&lambda.body, pos),
-        Expression::BinaryOp(left, _, right) => {
-            find_expression_symbol_at_pos(left, pos).or_else(|| find_expression_symbol_at_pos(right, pos))
-        }
+        Expression::BinaryOp(left, _, right) => find_expression_symbol_at_pos(left, pos)
+            .or_else(|| find_expression_symbol_at_pos(right, pos)),
         Expression::UnaryOp(_, inner) => find_expression_symbol_at_pos(inner, pos),
         _ => None,
     }
 }
 
-fn find_flow_or_branch_symbol_at_pos<'a>(body: &'a FlowOrBranch, pos: Position) -> Option<SymbolAtPos<'a>> {
+fn find_flow_or_branch_symbol_at_pos<'a>(
+    body: &'a FlowOrBranch,
+    pos: Position,
+) -> Option<SymbolAtPos<'a>> {
     match body {
         FlowOrBranch::Flow(flow) => find_pipe_flow_symbol_at_pos(flow, pos),
         FlowOrBranch::Branch(branch) => find_branch_symbol_at_pos(branch, pos),
     }
 }
 
-fn find_branch_symbol_at_pos<'a>(branch: &'a crate::ast::Branch, pos: Position) -> Option<SymbolAtPos<'a>> {
+fn find_branch_symbol_at_pos<'a>(
+    branch: &'a crate::ast::Branch,
+    pos: Position,
+) -> Option<SymbolAtPos<'a>> {
     if !branch.span.contains_zero_based(pos.line, pos.character) {
         return None;
     }
@@ -201,7 +307,10 @@ fn find_branch_symbol_at_pos<'a>(branch: &'a crate::ast::Branch, pos: Position) 
     None
 }
 
-fn find_pipe_flow_symbol_at_pos<'a>(flow: &'a crate::ast::PipeFlow, pos: Position) -> Option<SymbolAtPos<'a>> {
+fn find_pipe_flow_symbol_at_pos<'a>(
+    flow: &'a crate::ast::PipeFlow,
+    pos: Position,
+) -> Option<SymbolAtPos<'a>> {
     if !flow.span.contains_zero_based(pos.line, pos.character) {
         return None;
     }
@@ -229,34 +338,31 @@ fn find_pipe_flow_symbol_at_pos<'a>(flow: &'a crate::ast::PipeFlow, pos: Positio
 
 fn find_source_symbol_at_pos<'a>(source: &'a Source, pos: Position) -> Option<SymbolAtPos<'a>> {
     match source {
-        Source::Directive(dir) if dir.span.contains_zero_based(pos.line, pos.character) => Some(SymbolAtPos {
-            name: &dir.name,
-        }),
+        Source::Directive(dir) if dir.span.contains_zero_based(pos.line, pos.character) => {
+            Some(SymbolAtPos { name: &dir.name })
+        }
         Source::FunctionCall(call) if call.span.contains_zero_based(pos.line, pos.character) => {
-            Some(SymbolAtPos {
-                name: &call.name,
-            })
+            Some(SymbolAtPos { name: &call.name })
         }
         Source::Expression(expr) => find_expression_symbol_at_pos(expr, pos),
         _ => None,
     }
 }
 
-fn find_destination_symbol_at_pos<'a>(dest: &'a crate::ast::Destination, pos: Position) -> Option<SymbolAtPos<'a>> {
+fn find_destination_symbol_at_pos<'a>(
+    dest: &'a crate::ast::Destination,
+    pos: Position,
+) -> Option<SymbolAtPos<'a>> {
     match dest {
         crate::ast::Destination::Directive(dir)
             if dir.span.contains_zero_based(pos.line, pos.character) =>
         {
-            Some(SymbolAtPos {
-                name: &dir.name,
-            })
+            Some(SymbolAtPos { name: &dir.name })
         }
         crate::ast::Destination::FunctionCall(call)
             if call.span.contains_zero_based(pos.line, pos.character) =>
         {
-            Some(SymbolAtPos {
-                name: &call.name,
-            })
+            Some(SymbolAtPos { name: &call.name })
         }
         crate::ast::Destination::Branch(branch) => find_branch_symbol_at_pos(branch, pos),
         crate::ast::Destination::Expression(expr) => find_expression_symbol_at_pos(expr, pos),
@@ -268,17 +374,13 @@ fn find_symbol_at_position<'a>(program: &'a Program, pos: Position) -> Option<Sy
     for stmt in &program.statements {
         match stmt {
             Statement::Import(imp) if imp.span.contains_zero_based(pos.line, pos.character) => {
-                return Some(SymbolAtPos {
-                    name: &imp.path,
-                });
+                return Some(SymbolAtPos { name: &imp.path });
             }
             Statement::Function(func) if func.span.contains_zero_based(pos.line, pos.character) => {
                 if let Some(found) = find_flow_or_branch_symbol_at_pos(&func.body, pos) {
                     return Some(found);
                 }
-                return Some(SymbolAtPos {
-                    name: &func.name,
-                });
+                return Some(SymbolAtPos { name: &func.name });
             }
             Statement::Pipe(flow) if flow.span.contains_zero_based(pos.line, pos.character) => {
                 if let Some(found) = find_pipe_flow_symbol_at_pos(flow, pos) {
@@ -296,7 +398,7 @@ fn find_symbol_at_position<'a>(program: &'a Program, pos: Position) -> Option<Sy
 fn extract_import_prefix(text: &str, line: u32, character: u32) -> Option<(String, u32)> {
     let lines: Vec<&str> = text.lines().collect();
     let line_text = lines.get(line as usize)?;
-    let col = (character as usize).min(line_text.len());
+    let col = utf16_col_to_byte_idx(line_text, character);
     let before_cursor = &line_text[..col];
 
     let import_pos = before_cursor.rfind("@import")?;
@@ -307,7 +409,10 @@ fn extract_import_prefix(text: &str, line: u32, character: u32) -> Option<(Strin
     if prefix.contains('"') {
         return None;
     }
-    Some((prefix.to_string(), prefix_start as u32))
+    Some((
+        prefix.to_string(),
+        byte_idx_to_utf16_col(line_text, prefix_start),
+    ))
 }
 
 fn get_signature_context(text: &str, line: u32, character: u32) -> Option<(String, u32)> {
@@ -319,14 +424,17 @@ fn get_signature_context(text: &str, line: u32, character: u32) -> Option<(Strin
 
     let mut depth = 0;
     let mut param_index = 0;
-    let mut current_idx = character as usize;
+    let mut current_idx = {
+        let line_text = lines[line_idx];
+        utf16_col_to_char_idx(line_text, character)
+    };
     let mut current_line = line_idx;
 
     while current_line < lines.len() {
         let line_text = lines[current_line];
         let chars: Vec<char> = line_text.chars().collect();
         let end = current_idx.min(chars.len());
-        
+
         for i in (0..end).rev() {
             let c = chars[i];
             match c {
@@ -335,11 +443,12 @@ fn get_signature_context(text: &str, line: u32, character: u32) -> Option<(Strin
                     depth -= 1;
                     if depth < 0 {
                         // Found the start of the current function call
-                        let before_paren = &line_text[..i].trim_end();
-                        
+                        let before_paren: String = chars[..i].iter().collect();
+                        let before_paren = before_paren.trim_end();
+
                         // Extract the function/directive name before the parenthesis
-                        let mut name_start = before_paren.len();
                         let before_chars: Vec<char> = before_paren.chars().collect();
+                        let mut name_start = before_chars.len();
                         while name_start > 0 {
                             let pc = before_chars[name_start - 1];
                             if pc.is_alphanumeric() || pc == '_' || pc == '.' || pc == '@' {
@@ -348,7 +457,7 @@ fn get_signature_context(text: &str, line: u32, character: u32) -> Option<(Strin
                                 break;
                             }
                         }
-                        
+
                         let name: String = before_chars[name_start..].iter().collect();
                         if !name.is_empty() {
                             return Some((name, param_index));
@@ -364,14 +473,14 @@ fn get_signature_context(text: &str, line: u32, character: u32) -> Option<(Strin
                 _ => {}
             }
         }
-        
+
         if current_line == 0 {
             break;
         }
         current_line -= 1;
         current_idx = lines[current_line].len();
     }
-    
+
     None
 }
 
@@ -416,7 +525,10 @@ fn collect_local_import_candidates(base_dir: &Path, prefix: &str) -> Vec<String>
         if !is_loom {
             continue;
         }
-        let stem = entry_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let stem = entry_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
         let rel = if rel_dir.is_empty() {
             stem.to_string()
         } else {
@@ -485,7 +597,7 @@ fn collect_std_import_candidates(base_dir: &Path, prefix: &str) -> Vec<String> {
 fn extract_string_literal_prefix(text: &str, line: u32, character: u32) -> Option<(String, u32)> {
     let lines: Vec<&str> = text.lines().collect();
     let line_text = lines.get(line as usize)?;
-    let col = (character as usize).min(line_text.len());
+    let col = utf16_col_to_byte_idx(line_text, character);
     let before_cursor = &line_text[..col];
 
     let mut quote_indices = Vec::new();
@@ -503,9 +615,12 @@ fn extract_string_literal_prefix(text: &str, line: u32, character: u32) -> Optio
     }
 
     if quote_indices.len() % 2 == 1 {
-        let last_quote = *quote_indices.last().unwrap();
+        let last_quote = *quote_indices.last()?;
         let content_start = (last_quote + 1) as u32;
-        Some((before_cursor[last_quote + 1..].to_string(), content_start))
+        Some((
+            before_cursor[last_quote + 1..].to_string(),
+            byte_idx_to_utf16_col(line_text, content_start as usize),
+        ))
     } else {
         None
     }
@@ -545,8 +660,14 @@ fn file_completion_items(
     };
 
     let replace_range = Range {
-        start: Position { line, character: content_start_col },
-        end: Position { line, character: cursor_col },
+        start: Position {
+            line,
+            character: content_start_col,
+        },
+        end: Position {
+            line,
+            character: cursor_col,
+        },
     };
 
     let mut out = Vec::new();
@@ -561,7 +682,7 @@ fn file_completion_items(
             continue;
         }
         let entry_path = entry.path();
-        
+
         let rel = if rel_dir.is_empty() {
             file_name.clone()
         } else {
@@ -592,7 +713,7 @@ fn file_completion_items(
             });
         }
     }
-    
+
     out.sort_by(|a, b| a.label.cmp(&b.label));
     out
 }
@@ -621,8 +742,14 @@ fn import_completion_items(
     labels.dedup();
 
     let replace_range = Range {
-        start: Position { line, character: content_start_col },
-        end: Position { line, character: cursor_col },
+        start: Position {
+            line,
+            character: content_start_col,
+        },
+        end: Position {
+            line,
+            character: cursor_col,
+        },
     };
 
     labels
@@ -656,7 +783,12 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: Some(vec!["@".to_string(), ".".to_string(), "/".to_string(), "\"".to_string()]),
+                    trigger_characters: Some(vec![
+                        "@".to_string(),
+                        ".".to_string(),
+                        "/".to_string(),
+                        "\"".to_string(),
+                    ]),
                     ..Default::default()
                 }),
                 signature_help_provider: Some(SignatureHelpOptions {
@@ -683,10 +815,10 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.documents
-            .write()
-            .await
-            .insert(params.text_document.uri.to_string(), params.text_document.text.clone());
+        self.documents.write().await.insert(
+            params.text_document.uri.to_string(),
+            params.text_document.text.clone(),
+        );
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -698,7 +830,7 @@ impl LanguageServer for Backend {
                 .await
                 .insert(uri.to_string(), text.clone());
             let parse_result = parse(text);
-            
+
             let mut diagnostics = Vec::new();
             match parse_result {
                 Ok(program) => {
@@ -711,7 +843,10 @@ impl LanguageServer for Backend {
                             character: err.col.saturating_sub(1) as u32,
                         };
                         diagnostics.push(Diagnostic {
-                            range: Range { start: pos, end: pos },
+                            range: Range {
+                                start: pos,
+                                end: pos,
+                            },
                             severity: Some(DiagnosticSeverity::ERROR),
                             code: None,
                             code_description: None,
@@ -771,16 +906,17 @@ impl LanguageServer for Backend {
             } else {
                 get_word_at_position(text, position.line, position.character)
             };
-            if word.starts_with('@') {
-                word = word[1..].to_string();
-            }
+            word = word.strip_prefix('@').unwrap_or(&word).to_string();
 
             for dir in DIRECTIVES {
                 if word == dir.name {
                     return Ok(Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
-                            value: format!("**@{}**\n\n```loom\n{}\n```\n\n{}", dir.name, dir.signature, dir.description),
+                            value: format!(
+                                "**@{}**\n\n```loom\n{}\n```\n\n{}",
+                                dir.name, dir.signature, dir.description
+                            ),
                         }),
                         range: None,
                     }));
@@ -824,14 +960,18 @@ impl LanguageServer for Backend {
 
         if let Some(text) = self.documents.read().await.get(&uri.to_string()) {
             let doc_path = uri.to_file_path().unwrap_or_default();
-            let base_dir = doc_path.parent().unwrap_or_else(|| std::path::Path::new(""));
+            let base_dir = doc_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(""));
 
             let parsed = parse(text).ok();
             let word = parsed
                 .as_ref()
-                .and_then(|program| find_symbol_at_position(program, position).map(|s| s.name.to_string()))
+                .and_then(|program| {
+                    find_symbol_at_position(program, position).map(|s| s.name.to_string())
+                })
                 .unwrap_or_else(|| get_word_at_position(text, position.line, position.character));
-            
+
             // Check if word is of the form `module.function`
             if word.contains('.') {
                 let parts: Vec<&str> = word.split('.').collect();
@@ -851,25 +991,26 @@ impl LanguageServer for Backend {
                                     let stem = stem.split('.').last().unwrap_or(&imp.path);
                                     if stem == module_name {
                                         resolved_module = imp.path;
-                                    break;
+                                        break;
+                                    }
                                 }
                             }
                         }
                     }
-                    }
-                    
+
                     let module_path = resolved_module.replace('.', "/");
                     let target_file = format!("{}.loom", module_path);
-                    
+
                     // Search for the file locally or in std
                     let mut possible_paths = vec![
                         base_dir.join(&target_file),
-                        base_dir.join(&module_path).join("mod.loom")
+                        base_dir.join(&module_path).join("mod.loom"),
                     ];
 
                     for ancestor in base_dir.ancestors() {
                         possible_paths.push(ancestor.join("std").join(&target_file));
-                        possible_paths.push(ancestor.join("std").join(&module_path).join("mod.loom"));
+                        possible_paths
+                            .push(ancestor.join("std").join(&module_path).join("mod.loom"));
                         possible_paths.push(ancestor.join(&target_file));
                         possible_paths.push(ancestor.join(&module_path).join("mod.loom"));
                     }
@@ -898,21 +1039,34 @@ impl LanguageServer for Backend {
         let doc_text = self.documents.read().await.get(&uri.to_string()).cloned();
 
         if let Some(text) = &doc_text {
-            if let Some((prefix, start_col)) = extract_import_prefix(text, position.line, position.character) {
+            if let Some((prefix, start_col)) =
+                extract_import_prefix(text, position.line, position.character)
+            {
                 return Ok(Some(CompletionResponse::Array(import_completion_items(
-                    &uri, &prefix, position.line, start_col, position.character,
+                    &uri,
+                    &prefix,
+                    position.line,
+                    start_col,
+                    position.character,
                 ))));
             }
-            if let Some((prefix, start_col)) = extract_string_literal_prefix(text, position.line, position.character) {
+            if let Some((prefix, start_col)) =
+                extract_string_literal_prefix(text, position.line, position.character)
+            {
                 return Ok(Some(CompletionResponse::Array(file_completion_items(
-                    &uri, &prefix, position.line, start_col, position.character,
+                    &uri,
+                    &prefix,
+                    position.line,
+                    start_col,
+                    position.character,
                 ))));
             }
         }
 
         // We don't have document text in this simple server implementation,
         // so provide completions based on position context hints from the trigger character.
-        let trigger = params.context
+        let trigger = params
+            .context
             .as_ref()
             .and_then(|ctx| ctx.trigger_character.as_deref());
 
@@ -1002,11 +1156,14 @@ impl LanguageServer for Backend {
         let uri = params.text_document_position_params.text_document.uri;
 
         if let Some(text) = self.documents.read().await.get(&uri.to_string()) {
-            if let Some((name, param_index)) = get_signature_context(text, position.line, position.character) {
+            if let Some((name, param_index)) =
+                get_signature_context(text, position.line, position.character)
+            {
                 let mut stripped_name = name.clone();
-                if stripped_name.starts_with('@') {
-                    stripped_name = stripped_name[1..].to_string();
-                }
+                stripped_name = stripped_name
+                    .strip_prefix('@')
+                    .unwrap_or(&stripped_name)
+                    .to_string();
 
                 // Search directives
                 for dir in DIRECTIVES {
@@ -1179,7 +1336,9 @@ fn validate_program(program: &crate::ast::Program, text: &str) -> Vec<Diagnostic
             validate_pipe_flow(flow, text, &defined_funcs, &mut diagnostics);
         } else if let crate::ast::Statement::Function(func) = stmt {
             match &func.body {
-                crate::ast::FlowOrBranch::Flow(flow) => validate_pipe_flow(flow, text, &defined_funcs, &mut diagnostics),
+                crate::ast::FlowOrBranch::Flow(flow) => {
+                    validate_pipe_flow(flow, text, &defined_funcs, &mut diagnostics)
+                }
                 crate::ast::FlowOrBranch::Branch(branch) => {
                     for item in &branch.items {
                         if let crate::ast::BranchItem::Flow(f) = item {
@@ -1194,7 +1353,12 @@ fn validate_program(program: &crate::ast::Program, text: &str) -> Vec<Diagnostic
     diagnostics
 }
 
-fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &std::collections::HashSet<String>, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_pipe_flow(
+    flow: &crate::ast::PipeFlow,
+    text: &str,
+    defined_funcs: &std::collections::HashSet<String>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     match &flow.source {
         crate::ast::Source::Directive(dir) => {
             if !DIRECTIVES.iter().any(|d| d.name == dir.name) {
@@ -1226,7 +1390,12 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
                 }
             }
             crate::ast::Destination::FunctionCall(call) => {
-                if !call.name.contains('.') && !defined_funcs.contains(&call.name) && !BUILTIN_FUNCTIONS.iter().any(|(name, _, _)| *name == &call.name) {
+                if !call.name.contains('.')
+                    && !defined_funcs.contains(&call.name)
+                    && !BUILTIN_FUNCTIONS
+                        .iter()
+                        .any(|(name, _, _)| *name == &call.name)
+                {
                     diagnostics.push(Diagnostic {
                         range: lsp_range_from_span(call.span),
                         severity: Some(DiagnosticSeverity::WARNING),
@@ -1249,7 +1418,9 @@ fn validate_pipe_flow(flow: &crate::ast::PipeFlow, text: &str, defined_funcs: &s
 
     if let Some(fail) = &flow.on_fail {
         match fail.handler.as_ref() {
-            crate::ast::FlowOrBranch::Flow(f) => validate_pipe_flow(f, text, defined_funcs, diagnostics),
+            crate::ast::FlowOrBranch::Flow(f) => {
+                validate_pipe_flow(f, text, defined_funcs, diagnostics)
+            }
             crate::ast::FlowOrBranch::Branch(b) => {
                 for item in &b.items {
                     if let crate::ast::BranchItem::Flow(f) = item {
@@ -1270,4 +1441,35 @@ pub async fn run_server() {
         documents: RwLock::new(HashMap::new()),
     });
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn utf16_conversion_handles_multibyte_and_surrogate_pairs() {
+        let line = "aé🙂z";
+        assert_eq!(utf16_col_to_byte_idx(line, 0), 0);
+        assert_eq!(utf16_col_to_byte_idx(line, 1), "a".len());
+        assert_eq!(utf16_col_to_byte_idx(line, 2), "aé".len());
+        assert_eq!(utf16_col_to_byte_idx(line, 3), "aé".len());
+        assert_eq!(utf16_col_to_byte_idx(line, 4), "aé🙂".len());
+        assert_eq!(utf16_col_to_byte_idx(line, 5), line.len());
+    }
+
+    #[test]
+    fn get_word_at_position_works_with_unicode_line() {
+        let text = "alpha🙂beta";
+        let got = get_word_at_position(text, 0, 7);
+        assert_eq!(got, "beta");
+    }
+
+    #[test]
+    fn extract_string_prefix_uses_utf16_columns() {
+        let text = "\"é🙂ab\"";
+        let out = extract_string_literal_prefix(text, 0, 6).expect("inside string");
+        assert_eq!(out.0, "é🙂ab");
+        assert_eq!(out.1, 1);
+    }
 }

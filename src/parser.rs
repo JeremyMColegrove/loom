@@ -1,7 +1,7 @@
+use crate::ast::*;
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
-use crate::ast::*;
 
 #[derive(Parser)]
 #[grammar = "loom.pest"]
@@ -27,12 +27,10 @@ pub fn parse(source_code: &str) -> Result<Program, Vec<ParseError>> {
                 program_span = pair_span(&program_pair);
                 for statement_pair in program_pair.into_inner() {
                     match statement_pair.as_rule() {
-                        Rule::Statement => {
-                            match build_statement(statement_pair) {
-                                Ok(stmt) => ast_statements.push(stmt),
-                                Err(e) => errors.push(e),
-                            }
-                        }
+                        Rule::Statement => match build_statement(statement_pair) {
+                            Ok(stmt) => ast_statements.push(stmt),
+                            Err(e) => errors.push(e),
+                        },
                         Rule::COMMENT => {
                             let comment_text = statement_pair.as_str().to_string();
                             ast_statements.push(Statement::Comment(comment_text));
@@ -71,7 +69,7 @@ fn make_error(pair: &Pair<Rule>, msg: &str) -> ParseError {
     ParseError {
         message: msg.to_string(),
         line,
-        col
+        col,
     }
 }
 
@@ -104,16 +102,22 @@ fn build_statement(pair: Pair<Rule>) -> Result<Statement, ParseError> {
     let mut comments = Vec::new();
     let statement_inner =
         next_non_comment_or_error(&mut inner, &mut comments, &pair_for_err, "statement")?;
-    
+
     match statement_inner.as_rule() {
         Rule::ImportStmt => Ok(Statement::Import(build_import(statement_inner, comments)?)),
-        Rule::FunctionDef => Ok(Statement::Function(build_function(statement_inner, comments)?)),
+        Rule::FunctionDef => Ok(Statement::Function(build_function(
+            statement_inner,
+            comments,
+        )?)),
         Rule::PipeFlow => Ok(Statement::Pipe(build_pipe_flow(statement_inner, comments)?)),
-        _ => Err(make_error(&statement_inner, "Expected valid statement"))
+        _ => Err(make_error(&statement_inner, "Expected valid statement")),
     }
 }
 
-fn next_non_comment<'a>(iter: &mut impl Iterator<Item = Pair<'a, Rule>>, comments: &mut Vec<String>) -> Option<Pair<'a, Rule>> {
+fn next_non_comment<'a>(
+    iter: &mut impl Iterator<Item = Pair<'a, Rule>>,
+    comments: &mut Vec<String>,
+) -> Option<Pair<'a, Rule>> {
     for pair in iter {
         if pair.as_rule() == Rule::COMMENT {
             comments.push(pair.as_str().to_string());
@@ -129,7 +133,12 @@ fn build_import(pair: Pair<Rule>, comments: Vec<String>) -> Result<ImportStmt, P
     let pair_for_err = pair.clone();
     let mut inner = pair.into_inner();
     let mut skipped_comments = Vec::new();
-    let path_pair = next_non_comment_or_error(&mut inner, &mut skipped_comments, &pair_for_err, "import path literal")?;
+    let path_pair = next_non_comment_or_error(
+        &mut inner,
+        &mut skipped_comments,
+        &pair_for_err,
+        "import path literal",
+    )?;
     let mut path_inner = path_pair.clone().into_inner();
     let path = path_inner
         .next()
@@ -149,11 +158,17 @@ fn build_function(pair: Pair<Rule>, comments: Vec<String>) -> Result<FunctionDef
     let span = pair_span(&pair);
     let pair_for_err = pair.clone();
     let mut inner = pair.into_inner();
-    let name = next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "function name")?
-        .as_str()
-        .to_string();
+    let name =
+        next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "function name")?
+            .as_str()
+            .to_string();
     let mut parameters = Vec::new();
-    let next = next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "function body or params")?;
+    let next = next_non_comment_or_error(
+        &mut inner,
+        &mut Vec::new(),
+        &pair_for_err,
+        "function body or params",
+    )?;
     let body_pair = if next.as_rule() == Rule::ParamList {
         for param in next.into_inner() {
             if param.as_rule() != Rule::COMMENT {
@@ -176,11 +191,16 @@ fn build_function(pair: Pair<Rule>, comments: Vec<String>) -> Result<FunctionDef
 
 fn build_flow_or_branch(pair: Pair<Rule>) -> Result<FlowOrBranch, ParseError> {
     let pair_for_err = pair.clone();
-    let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "flow or branch")?;
+    let inner = next_non_comment_or_error(
+        &mut pair.into_inner(),
+        &mut Vec::new(),
+        &pair_for_err,
+        "flow or branch",
+    )?;
     match inner.as_rule() {
         Rule::Branch => Ok(FlowOrBranch::Branch(build_branch(inner)?)),
         Rule::PipeFlow => Ok(FlowOrBranch::Flow(build_pipe_flow(inner, Vec::new())?)),
-        _ => Err(make_error(&inner, "Expected flow or branch"))
+        _ => Err(make_error(&inner, "Expected flow or branch")),
     }
 }
 
@@ -189,7 +209,7 @@ fn build_branch(pair: Pair<Rule>) -> Result<Branch, ParseError> {
     let mut items = Vec::new();
     let mut comments = Vec::new();
     let mut inner = pair.into_inner();
-    
+
     while let Some(next) = next_non_comment(&mut inner, &mut comments) {
         for comment in comments.drain(..) {
             items.push(BranchItem::Comment(comment));
@@ -200,7 +220,7 @@ fn build_branch(pair: Pair<Rule>) -> Result<Branch, ParseError> {
     for comment in comments {
         items.push(BranchItem::Comment(comment));
     }
-    
+
     Ok(Branch { items, span })
 }
 
@@ -208,11 +228,16 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
     let span = pair_span(&pair);
     let pair_for_err = pair.clone();
     let mut inner = pair.into_inner();
-    let source = build_source(next_non_comment_or_error(&mut inner, &mut comments, &pair_for_err, "flow source")?)?;
-    
+    let source = build_source(next_non_comment_or_error(
+        &mut inner,
+        &mut comments,
+        &pair_for_err,
+        "flow source",
+    )?)?;
+
     let mut operations = Vec::new();
     let mut on_fail = None;
-    
+
     while let Some(next) = next_non_comment(&mut inner, &mut comments) {
         match next.as_rule() {
             Rule::PipeOp => {
@@ -221,7 +246,12 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
                     "->" => PipeOp::Move,
                     _ => PipeOp::Safe,
                 };
-                let maybe_next = next_non_comment_or_error(&mut inner, &mut comments, &pair_for_err, "pipe destination or on_fail handler")?;
+                let maybe_next = next_non_comment_or_error(
+                    &mut inner,
+                    &mut comments,
+                    &pair_for_err,
+                    "pipe destination or on_fail handler",
+                )?;
                 if maybe_next.as_rule() == Rule::FlowOrBranch {
                     // on_fail supports an optional leading pipe op: on_fail >> <flow-or-branch>
                     let on_fail_span = pair_span(&maybe_next);
@@ -236,12 +266,23 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
                     operations.push((op, dest));
                 }
             }
-            Rule::Identifier => { // alias for on_fail
+            Rule::Identifier => {
+                // alias for on_fail
                 let alias = Some(next.as_str().to_string());
-                let next_piece = next_non_comment_or_error(&mut inner, &mut comments, &pair_for_err, "on_fail handler")?;
+                let next_piece = next_non_comment_or_error(
+                    &mut inner,
+                    &mut comments,
+                    &pair_for_err,
+                    "on_fail handler",
+                )?;
                 let handler_pair = if next_piece.as_rule() == Rule::PipeOp {
                     // on_fail as err >> <flow-or-branch>
-                    next_non_comment_or_error(&mut inner, &mut comments, &pair_for_err, "on_fail flow or branch after pipe op")?
+                    next_non_comment_or_error(
+                        &mut inner,
+                        &mut comments,
+                        &pair_for_err,
+                        "on_fail flow or branch after pipe op",
+                    )?
                 } else {
                     next_piece
                 };
@@ -253,7 +294,8 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
                     span: on_fail_span,
                 });
             }
-            Rule::FlowOrBranch => { // on_fail without alias
+            Rule::FlowOrBranch => {
+                // on_fail without alias
                 let on_fail_span = pair_span(&next);
                 let handler = Box::new(build_flow_or_branch(next)?);
                 on_fail = Some(OnFail {
@@ -262,10 +304,10 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
                     span: on_fail_span,
                 });
             }
-            _ => return Err(make_error(&next, "Unexpected token in pipe flow"))
+            _ => return Err(make_error(&next, "Unexpected token in pipe flow")),
         }
     }
-    
+
     Ok(PipeFlow {
         source,
         operations,
@@ -277,32 +319,52 @@ fn build_pipe_flow(pair: Pair<Rule>, mut comments: Vec<String>) -> Result<PipeFl
 
 fn build_source(pair: Pair<Rule>) -> Result<Source, ParseError> {
     let pair_for_err = pair.clone();
-    let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "source expression")?;
+    let inner = next_non_comment_or_error(
+        &mut pair.into_inner(),
+        &mut Vec::new(),
+        &pair_for_err,
+        "source expression",
+    )?;
     match inner.as_rule() {
         Rule::DirectiveFlow => Ok(Source::Directive(build_directive_flow(inner)?)),
         Rule::FunctionCall => Ok(Source::FunctionCall(build_function_call(inner)?)),
         Rule::NonLambdaExpression => {
             let inner_for_err = inner.clone();
-            let expr_inner = next_non_comment_or_error(&mut inner.into_inner(), &mut Vec::new(), &inner_for_err, "source expression value")?;
+            let expr_inner = next_non_comment_or_error(
+                &mut inner.into_inner(),
+                &mut Vec::new(),
+                &inner_for_err,
+                "source expression value",
+            )?;
             Ok(Source::Expression(build_expression_part(expr_inner)?))
         }
-        _ => Err(make_error(&inner, "Expected source"))
+        _ => Err(make_error(&inner, "Expected source")),
     }
 }
 
 fn build_destination(pair: Pair<Rule>) -> Result<Destination, ParseError> {
     let pair_for_err = pair.clone();
-    let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "destination expression")?;
+    let inner = next_non_comment_or_error(
+        &mut pair.into_inner(),
+        &mut Vec::new(),
+        &pair_for_err,
+        "destination expression",
+    )?;
     match inner.as_rule() {
         Rule::Branch => Ok(Destination::Branch(build_branch(inner)?)),
         Rule::DirectiveFlow => Ok(Destination::Directive(build_directive_flow(inner)?)),
         Rule::FunctionCall => Ok(Destination::FunctionCall(build_function_call(inner)?)),
         Rule::NonLambdaExpression => {
             let inner_for_err = inner.clone();
-            let expr_inner = next_non_comment_or_error(&mut inner.into_inner(), &mut Vec::new(), &inner_for_err, "destination expression value")?;
+            let expr_inner = next_non_comment_or_error(
+                &mut inner.into_inner(),
+                &mut Vec::new(),
+                &inner_for_err,
+                "destination expression value",
+            )?;
             Ok(Destination::Expression(build_expression_part(expr_inner)?))
         }
-        _ => Err(make_error(&inner, "Expected destination"))
+        _ => Err(make_error(&inner, "Expected destination")),
     }
 }
 
@@ -310,9 +372,14 @@ fn build_function_call(pair: Pair<Rule>) -> Result<FunctionCall, ParseError> {
     let span = pair_span(&pair);
     let pair_for_err = pair.clone();
     let mut inner = pair.into_inner();
-    let name = next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "function call name")?
-        .as_str()
-        .to_string();
+    let name = next_non_comment_or_error(
+        &mut inner,
+        &mut Vec::new(),
+        &pair_for_err,
+        "function call name",
+    )?
+    .as_str()
+    .to_string();
     let mut arguments = Vec::new();
     let mut alias = None;
     while let Some(next) = next_non_comment(&mut inner, &mut Vec::new()) {
@@ -326,7 +393,7 @@ fn build_function_call(pair: Pair<Rule>) -> Result<FunctionCall, ParseError> {
             Rule::Identifier => {
                 alias = Some(next.as_str().to_string());
             }
-            _ => ()
+            _ => (),
         }
     }
     Ok(FunctionCall {
@@ -341,12 +408,13 @@ fn build_directive_flow(pair: Pair<Rule>) -> Result<DirectiveFlow, ParseError> {
     let span = pair_span(&pair);
     let pair_for_err = pair.clone();
     let mut inner = pair.into_inner();
-    let name = next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "directive name")?
-        .as_str()
-        .to_string();
+    let name =
+        next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "directive name")?
+            .as_str()
+            .to_string();
     let mut arguments = Vec::new();
     let mut alias = None;
-    
+
     while let Some(next) = next_non_comment(&mut inner, &mut Vec::new()) {
         match next.as_rule() {
             Rule::Arguments => {
@@ -358,7 +426,7 @@ fn build_directive_flow(pair: Pair<Rule>) -> Result<DirectiveFlow, ParseError> {
             Rule::Identifier => {
                 alias = Some(next.as_str().to_string());
             }
-            _ => ()
+            _ => (),
         }
     }
     Ok(DirectiveFlow {
@@ -371,15 +439,25 @@ fn build_directive_flow(pair: Pair<Rule>) -> Result<DirectiveFlow, ParseError> {
 
 fn build_expression(pair: Pair<Rule>) -> Result<Expression, ParseError> {
     let pair_for_err = pair.clone();
-    let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "expression")?;
+    let inner = next_non_comment_or_error(
+        &mut pair.into_inner(),
+        &mut Vec::new(),
+        &pair_for_err,
+        "expression",
+    )?;
     match inner.as_rule() {
         Rule::Lambda => {
             let lambda_span = pair_span(&inner);
             let inner_for_err = inner.clone();
             let mut l_inner = inner.into_inner();
-            let param = next_non_comment_or_error(&mut l_inner, &mut Vec::new(), &inner_for_err, "lambda parameter")?
-                .as_str()
-                .to_string();
+            let param = next_non_comment_or_error(
+                &mut l_inner,
+                &mut Vec::new(),
+                &inner_for_err,
+                "lambda parameter",
+            )?
+            .as_str()
+            .to_string();
             let body = Box::new(build_expression_part(next_non_comment_or_error(
                 &mut l_inner,
                 &mut Vec::new(),
@@ -398,7 +476,7 @@ fn build_expression(pair: Pair<Rule>) -> Result<Expression, ParseError> {
         Rule::MemberAccess => build_expression_part(inner),
         Rule::Literal => build_expression_part(inner),
         Rule::Identifier => build_expression_part(inner),
-        _ => Err(make_error(&inner, "Expected expression"))
+        _ => Err(make_error(&inner, "Expected expression")),
     }
 }
 
@@ -414,9 +492,14 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
                 &pair_for_err,
                 "left side of binary expression",
             )?)?);
-            let op = next_non_comment_or_error(&mut inner, &mut Vec::new(), &pair_for_err, "binary operator")?
-                .as_str()
-                .to_string();
+            let op = next_non_comment_or_error(
+                &mut inner,
+                &mut Vec::new(),
+                &pair_for_err,
+                "binary operator",
+            )?
+            .as_str()
+            .to_string();
             let right = Box::new(build_expression(next_non_comment_or_error(
                 &mut inner,
                 &mut Vec::new(),
@@ -427,13 +510,16 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
         }
         Rule::UnaryExpr => {
             let pair_for_err = pair.clone();
-            let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "unary expression body")?;
+            let inner = next_non_comment_or_error(
+                &mut pair.into_inner(),
+                &mut Vec::new(),
+                &pair_for_err,
+                "unary expression body",
+            )?;
             let expr = Box::new(build_expression_part(inner)?);
             Ok(Expression::UnaryOp("!".to_string(), expr))
         }
-        Rule::FunctionCall => {
-            Ok(Expression::FunctionCall(build_function_call(pair)?))
-        }
+        Rule::FunctionCall => Ok(Expression::FunctionCall(build_function_call(pair)?)),
         Rule::MemberAccess => {
             let parts = pair
                 .into_inner()
@@ -444,22 +530,37 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
         }
         Rule::Literal => {
             let pair_for_err = pair.clone();
-            let inner = next_non_comment_or_error(&mut pair.into_inner(), &mut Vec::new(), &pair_for_err, "literal value")?;
+            let inner = next_non_comment_or_error(
+                &mut pair.into_inner(),
+                &mut Vec::new(),
+                &pair_for_err,
+                "literal value",
+            )?;
             match inner.as_rule() {
                 Rule::StringLiteral => {
                     let inner_for_err = inner.clone();
                     let mut lit_inner = inner.into_inner();
-                    let s = next_non_comment_or_error(&mut lit_inner, &mut Vec::new(), &inner_for_err, "string literal body")?
-                        .as_str()
-                        .to_string();
+                    let s = next_non_comment_or_error(
+                        &mut lit_inner,
+                        &mut Vec::new(),
+                        &inner_for_err,
+                        "string literal body",
+                    )?
+                    .as_str()
+                    .to_string();
                     Ok(Expression::Literal(Literal::String(s)))
                 }
                 Rule::PathLiteral => {
                     let inner_for_err = inner.clone();
                     let mut lit_inner = inner.into_inner();
-                    let s = next_non_comment_or_error(&mut lit_inner, &mut Vec::new(), &inner_for_err, "path literal body")?
-                        .as_str()
-                        .to_string();
+                    let s = next_non_comment_or_error(
+                        &mut lit_inner,
+                        &mut Vec::new(),
+                        &inner_for_err,
+                        "path literal body",
+                    )?
+                    .as_str()
+                    .to_string();
                     Ok(Expression::Literal(Literal::Path(s)))
                 }
                 Rule::Number => {
@@ -473,13 +574,14 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
                     let b = inner.as_str() == "true";
                     Ok(Expression::Literal(Literal::Boolean(b)))
                 }
-                _ => Err(make_error(&inner, "Expected valid literal"))
+                _ => Err(make_error(&inner, "Expected valid literal")),
             }
         }
-        Rule::Identifier => {
-            Ok(Expression::Identifier(pair.as_str().to_string()))
-        }
-        _ => Err(make_error(&pair, &format!("Unexpected expression part: {:?}", pair.as_rule())))
+        Rule::Identifier => Ok(Expression::Identifier(pair.as_str().to_string())),
+        _ => Err(make_error(
+            &pair,
+            &format!("Unexpected expression part: {:?}", pair.as_rule()),
+        )),
     }
 }
 
@@ -576,13 +678,18 @@ mod tests {
         let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
             panic!("expected member-access source");
         };
-        assert_eq!(parts, &vec!["event".to_string(), "file".to_string(), "path".to_string()]);
+        assert_eq!(
+            parts,
+            &vec!["event".to_string(), "file".to_string(), "path".to_string()]
+        );
     }
 
     #[test]
     fn parses_filter_lambda_with_comparison_operator() {
-        let program = parse("\"customers.csv\" >> csv.parse >> @filter(row >> row.Index > 90) >> \"high.txt\"")
-            .expect("parse should succeed");
+        let program = parse(
+            "\"customers.csv\" >> csv.parse >> @filter(row >> row.Index > 90) >> \"high.txt\"",
+        )
+        .expect("parse should succeed");
         let Statement::Pipe(flow) = &program.statements[0] else {
             panic!("expected pipe statement");
         };
@@ -601,8 +708,9 @@ mod tests {
 
     #[test]
     fn parses_filter_lambda_with_logical_and_operator() {
-        let program = parse("\"customers.csv\" >> csv.parse >> @filter(row >> 1 && 2) >> \"high.txt\"")
-            .expect("parse should succeed");
+        let program =
+            parse("\"customers.csv\" >> csv.parse >> @filter(row >> 1 && 2) >> \"high.txt\"")
+                .expect("parse should succeed");
         let Statement::Pipe(flow) = &program.statements[0] else {
             panic!("expected pipe statement");
         };
@@ -640,13 +748,24 @@ mod tests {
             panic!("expected flow in branch item");
         };
         let Source::Directive(read_dir) = &inner_flow.source else {
-            panic!("expected @read directive as source, got {:?}", inner_flow.source);
+            panic!(
+                "expected @read directive as source, got {:?}",
+                inner_flow.source
+            );
         };
         assert_eq!(read_dir.name, "read");
         // Should have 2 operations: >> @csv.parse as data, >> [...]
-        assert_eq!(inner_flow.operations.len(), 2, "expected 2 operations, got: {:?}", inner_flow.operations);
+        assert_eq!(
+            inner_flow.operations.len(),
+            2,
+            "expected 2 operations, got: {:?}",
+            inner_flow.operations
+        );
         let (_, Destination::Directive(csv_dir)) = &inner_flow.operations[0] else {
-            panic!("expected @csv.parse directive destination, got: {:?}", inner_flow.operations[0]);
+            panic!(
+                "expected @csv.parse directive destination, got: {:?}",
+                inner_flow.operations[0]
+            );
         };
         assert_eq!(csv_dir.name, "csv.parse");
         assert_eq!(csv_dir.alias, Some("data".to_string()));
@@ -658,12 +777,20 @@ mod tests {
     fn precedence_multiply_binds_tighter_than_add() {
         // a + b * c should become BinOp(a, +, BinOp(b, *, c))
         let program = parse("x >> filter(a + b * c)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(op, "+");
         assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
-        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else { panic!("expected inner binop"); };
+        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
+            panic!("expected inner binop");
+        };
         assert_eq!(inner_op, "*");
     }
 
@@ -671,13 +798,23 @@ mod tests {
     fn precedence_equality_binds_tighter_than_logical_and() {
         // a == b && c == d → BinOp(BinOp(a,==,b), &&, BinOp(c,==,d))
         let program = parse("x >> filter(a == b && c == d)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(op, "&&");
-        let Expression::BinaryOp(_, left_op, _) = left.as_ref() else { panic!("expected left binop"); };
+        let Expression::BinaryOp(_, left_op, _) = left.as_ref() else {
+            panic!("expected left binop");
+        };
         assert_eq!(left_op, "==");
-        let Expression::BinaryOp(_, right_op, _) = right.as_ref() else { panic!("expected right binop"); };
+        let Expression::BinaryOp(_, right_op, _) = right.as_ref() else {
+            panic!("expected right binop");
+        };
         assert_eq!(right_op, "==");
     }
 
@@ -685,12 +822,20 @@ mod tests {
     fn precedence_and_binds_tighter_than_or() {
         // a || b && c → BinOp(a, ||, BinOp(b, &&, c))
         let program = parse("x >> filter(a || b && c)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(op, "||");
         assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
-        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else { panic!("expected inner binop"); };
+        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
+            panic!("expected inner binop");
+        };
         assert_eq!(inner_op, "&&");
     }
 
@@ -699,9 +844,15 @@ mod tests {
         // a > b && c < d || e == f
         // Expected: BinOp(BinOp(BinOp(a,>,b), &&, BinOp(c,<,d)), ||, BinOp(e,==,f))
         let program = parse("x >> filter(a > b && c < d || e == f)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(top_op, "||");
     }
 
@@ -709,9 +860,15 @@ mod tests {
     fn precedence_arithmetic_then_comparison_then_logical() {
         // a + b > c && d → BinOp(BinOp(BinOp(a,+,b), >, c), &&, d)
         let program = parse("x >> filter(a + b > c && d)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(top_op, "&&");
     }
 
@@ -720,7 +877,9 @@ mod tests {
     #[test]
     fn parses_deeply_nested_member_access() {
         let program = parse("a.b.c.d.e >> out").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
             panic!("expected member access source");
         };
@@ -730,9 +889,15 @@ mod tests {
     #[test]
     fn parses_unary_not_on_member_access() {
         let program = parse("x >> filter(!event.active)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::UnaryOp(op, inner) = &call.arguments[0] else { panic!("expected unary"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
+            panic!("expected unary");
+        };
         assert_eq!(op, "!");
         assert!(matches!(inner.as_ref(), Expression::MemberAccess(_)));
     }
@@ -740,9 +905,15 @@ mod tests {
     #[test]
     fn parses_unary_not_on_function_call() {
         let program = parse("x >> filter(!is_valid(x))").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::UnaryOp(op, inner) = &call.arguments[0] else { panic!("expected unary"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
+            panic!("expected unary");
+        };
         assert_eq!(op, "!");
         assert!(matches!(inner.as_ref(), Expression::FunctionCall(_)));
     }
@@ -752,40 +923,68 @@ mod tests {
         // row >> row.id != null && row.price > 0
         let src = r#""data.csv" >> @filter(row >> row.id != null && row.price > 0) >> "out.csv""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else { panic!("expected directive"); };
-        let Some(Expression::Lambda(lambda)) = dir.arguments.first() else { panic!("expected lambda"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+            panic!("expected directive");
+        };
+        let Some(Expression::Lambda(lambda)) = dir.arguments.first() else {
+            panic!("expected lambda");
+        };
         assert_eq!(lambda.param, "row");
         // Top-level operator should be && after precedence fix
-        let Expression::BinaryOp(_, top_op, _) = lambda.body.as_ref() else { panic!("expected binop"); };
+        let Expression::BinaryOp(_, top_op, _) = lambda.body.as_ref() else {
+            panic!("expected binop");
+        };
         assert_eq!(top_op, "&&");
     }
 
     #[test]
     fn parses_nested_function_calls_in_expression() {
         let program = parse("x >> filter(outer(inner(x)))").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::FunctionCall(outer) = &call.arguments[0] else { panic!("expected outer call"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::FunctionCall(outer) = &call.arguments[0] else {
+            panic!("expected outer call");
+        };
         assert_eq!(outer.name, "outer");
-        let Expression::FunctionCall(inner) = &outer.arguments[0] else { panic!("expected inner call"); };
+        let Expression::FunctionCall(inner) = &outer.arguments[0] else {
+            panic!("expected inner call");
+        };
         assert_eq!(inner.name, "inner");
     }
 
     #[test]
     fn parses_boolean_literals_as_function_args() {
         let program = parse("x >> func(true, false)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
         assert_eq!(call.arguments.len(), 2);
-        assert!(matches!(&call.arguments[0], Expression::Literal(Literal::Boolean(true))));
-        assert!(matches!(&call.arguments[1], Expression::Literal(Literal::Boolean(false))));
+        assert!(matches!(
+            &call.arguments[0],
+            Expression::Literal(Literal::Boolean(true))
+        ));
+        assert!(matches!(
+            &call.arguments[1],
+            Expression::Literal(Literal::Boolean(false))
+        ));
     }
 
     #[test]
     fn parses_negative_number() {
         let program = parse("-42.5 >> out").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         let Source::Expression(Expression::Literal(Literal::Number(n))) = &flow.source else {
             panic!("expected number literal source");
         };
@@ -795,9 +994,15 @@ mod tests {
     #[test]
     fn parses_string_concatenation_expression() {
         let program = parse(r#"x >> filter(\"hello" + \" world")"#).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else { panic!("expected call"); };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else { panic!("expected binop"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+            panic!("expected call");
+        };
+        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+            panic!("expected binop");
+        };
         assert_eq!(op, "+");
         assert!(matches!(left.as_ref(), Expression::Literal(Literal::String(s)) if s == "hello"));
         assert!(matches!(right.as_ref(), Expression::Literal(Literal::String(s)) if s == " world"));
@@ -808,7 +1013,9 @@ mod tests {
     #[test]
     fn parses_import_without_alias() {
         let program = parse(r#"@import "utils""#).expect("parse should succeed");
-        let Statement::Import(import) = &program.statements[0] else { panic!("expected import"); };
+        let Statement::Import(import) = &program.statements[0] else {
+            panic!("expected import");
+        };
         assert_eq!(import.path, "utils");
         assert_eq!(import.alias, None);
     }
@@ -816,7 +1023,9 @@ mod tests {
     #[test]
     fn parses_import_with_dotted_path_and_alias() {
         let program = parse(r#"@import "std.csv" as csv"#).expect("parse should succeed");
-        let Statement::Import(import) = &program.statements[0] else { panic!("expected import"); };
+        let Statement::Import(import) = &program.statements[0] else {
+            panic!("expected import");
+        };
         assert_eq!(import.path, "std.csv");
         assert_eq!(import.alias, Some("csv".to_string()));
     }
@@ -830,7 +1039,12 @@ mod tests {
         "#;
         let program = parse(src).expect("parse should succeed");
         assert_eq!(program.statements.len(), 3);
-        assert!(program.statements.iter().all(|s| matches!(s, Statement::Import(_))));
+        assert!(
+            program
+                .statements
+                .iter()
+                .all(|s| matches!(s, Statement::Import(_)))
+        );
     }
 
     // ── Function Definition Edge Cases ───────────────────────────────────
@@ -838,7 +1052,9 @@ mod tests {
     #[test]
     fn parses_zero_parameter_function() {
         let program = parse(r#"greet() => \"hello" >> output"#).expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else { panic!("expected function"); };
+        let Statement::Function(func) = &program.statements[0] else {
+            panic!("expected function");
+        };
         assert_eq!(func.name, "greet");
         assert!(func.parameters.is_empty());
     }
@@ -846,7 +1062,9 @@ mod tests {
     #[test]
     fn parses_multi_parameter_function() {
         let program = parse("add(a, b, c) => a").expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else { panic!("expected function"); };
+        let Statement::Function(func) = &program.statements[0] else {
+            panic!("expected function");
+        };
         assert_eq!(func.name, "add");
         assert_eq!(func.parameters, vec!["a", "b", "c"]);
     }
@@ -855,20 +1073,30 @@ mod tests {
     fn parses_function_body_as_branch() {
         let src = r#"handler(x) => [x >> "out1.txt", x >> "out2.txt"]"#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else { panic!("expected function"); };
+        let Statement::Function(func) = &program.statements[0] else {
+            panic!("expected function");
+        };
         assert_eq!(func.name, "handler");
         assert!(matches!(func.body, FlowOrBranch::Branch(_)));
     }
 
     #[test]
     fn parses_function_with_binary_expr_body() {
-        let program = parse("is_valid(row) => row.id != null && row.price > 0").expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else { panic!("expected function"); };
+        let program = parse("is_valid(row) => row.id != null && row.price > 0")
+            .expect("parse should succeed");
+        let Statement::Function(func) = &program.statements[0] else {
+            panic!("expected function");
+        };
         assert_eq!(func.name, "is_valid");
         assert_eq!(func.parameters, vec!["row"]);
         // Body should be a Flow whose source is a binary expression
-        let FlowOrBranch::Flow(flow) = &func.body else { panic!("expected flow body"); };
-        assert!(matches!(&flow.source, Source::Expression(Expression::BinaryOp(_, _, _))));
+        let FlowOrBranch::Flow(flow) = &func.body else {
+            panic!("expected flow body");
+        };
+        assert!(matches!(
+            &flow.source,
+            Source::Expression(Expression::BinaryOp(_, _, _))
+        ));
     }
 
     // ── Pipe Flow Edge Cases ─────────────────────────────────────────────
@@ -876,7 +1104,9 @@ mod tests {
     #[test]
     fn parses_chained_pipes() {
         let program = parse("a >> b >> c >> d").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert_eq!(flow.operations.len(), 3);
         assert!(flow.operations.iter().all(|(op, _)| *op == PipeOp::Safe));
     }
@@ -885,7 +1115,9 @@ mod tests {
     fn parses_mixed_pipe_operators() {
         let src = r#"a >> "b.txt" >>> "c.txt" -> "d/""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert_eq!(flow.operations.len(), 3);
         assert_eq!(flow.operations[0].0, PipeOp::Safe);
         assert_eq!(flow.operations[1].0, PipeOp::Force);
@@ -895,8 +1127,12 @@ mod tests {
     #[test]
     fn parses_empty_branch() {
         let program = parse("x >> []").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Branch(branch)) = &flow.operations[0] else { panic!("expected branch"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Branch(branch)) = &flow.operations[0] else {
+            panic!("expected branch");
+        };
         assert!(branch.items.is_empty());
     }
 
@@ -904,11 +1140,17 @@ mod tests {
     fn parses_nested_branches() {
         let src = r#"x >> [a >> [b, c], d >> "out.txt"]"#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Branch(outer)) = &flow.operations[0] else { panic!("expected outer branch"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Branch(outer)) = &flow.operations[0] else {
+            panic!("expected outer branch");
+        };
         assert_eq!(outer.items.len(), 2);
         // First flow's destination should be a nested branch
-        let BranchItem::Flow(first_flow) = &outer.items[0] else { panic!("expected first branch item to be a flow"); };
+        let BranchItem::Flow(first_flow) = &outer.items[0] else {
+            panic!("expected first branch item to be a flow");
+        };
         let (_, Destination::Branch(inner)) = &first_flow.operations[0] else {
             panic!("expected inner branch");
         };
@@ -919,7 +1161,9 @@ mod tests {
     fn parses_on_fail_without_alias() {
         let src = r#"x >> y on_fail >> "error.log""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert!(flow.on_fail.is_some());
         let on_fail = flow.on_fail.as_ref().unwrap();
         assert_eq!(on_fail.alias, None);
@@ -929,7 +1173,9 @@ mod tests {
     fn parses_on_fail_with_alias_and_branch() {
         let src = r#"x >> y on_fail as e >> [e >> "log.txt"]"#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert!(flow.on_fail.is_some());
         let on_fail = flow.on_fail.as_ref().unwrap();
         assert_eq!(on_fail.alias, Some("e".to_string()));
@@ -940,7 +1186,9 @@ mod tests {
     fn parses_force_pipe_operator() {
         let src = r#""input.txt" >>> "output.txt""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert_eq!(flow.operations[0].0, PipeOp::Force);
     }
 
@@ -948,7 +1196,9 @@ mod tests {
     fn parses_move_pipe_operator() {
         let src = r#""input.txt" -> "archive/""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
         assert_eq!(flow.operations[0].0, PipeOp::Move);
     }
 
@@ -958,8 +1208,12 @@ mod tests {
     fn parses_directive_with_no_args_and_alias() {
         let src = r#"x >> @atomic as txn >> "out.txt""#;
         let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else { panic!("expected directive"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+            panic!("expected directive");
+        };
         assert_eq!(dir.name, "atomic");
         assert!(dir.arguments.is_empty());
         assert_eq!(dir.alias, Some("txn".to_string()));
@@ -968,19 +1222,31 @@ mod tests {
     #[test]
     fn parses_directive_with_multiple_args() {
         let program = parse("x >> @resize(800, 600)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else { panic!("expected directive"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+            panic!("expected directive");
+        };
         assert_eq!(dir.name, "resize");
         assert_eq!(dir.arguments.len(), 2);
-        assert!(matches!(&dir.arguments[0], Expression::Literal(Literal::Number(n)) if *n == 800.0));
-        assert!(matches!(&dir.arguments[1], Expression::Literal(Literal::Number(n)) if *n == 600.0));
+        assert!(
+            matches!(&dir.arguments[0], Expression::Literal(Literal::Number(n)) if *n == 800.0)
+        );
+        assert!(
+            matches!(&dir.arguments[1], Expression::Literal(Literal::Number(n)) if *n == 600.0)
+        );
     }
 
     #[test]
     fn parses_qualified_directive_with_alias() {
         let program = parse("x >> @csv.parse as data").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else { panic!("expected pipe"); };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else { panic!("expected directive"); };
+        let Statement::Pipe(flow) = &program.statements[0] else {
+            panic!("expected pipe");
+        };
+        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+            panic!("expected directive");
+        };
         assert_eq!(dir.name, "csv.parse");
         assert_eq!(dir.alias, Some("data".to_string()));
     }
@@ -996,7 +1262,10 @@ mod tests {
     #[test]
     fn rejects_bare_directive_without_name() {
         let result = parse("x >> @");
-        assert!(result.is_err(), "should reject bare @ without directive name");
+        assert!(
+            result.is_err(),
+            "should reject bare @ without directive name"
+        );
     }
 
     #[test]

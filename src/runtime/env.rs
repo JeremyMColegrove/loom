@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::ast::{FunctionDef, Lambda};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -33,7 +33,8 @@ impl Value {
                 format!("[{}]", parts.join(", "))
             }
             Value::Record(map) => {
-                let parts: Vec<String> = map.iter()
+                let parts: Vec<String> = map
+                    .iter()
                     .map(|(k, v)| format!("{}: {}", k, v.as_string()))
                     .collect();
                 format!("{{{}}}", parts.join(", "))
@@ -62,19 +63,17 @@ impl Value {
 
     pub fn get_member(&self, member: &str) -> Result<Value, String> {
         match self {
-            Value::Path(p) => {
-                match member {
-                    "name" => {
-                        let name = std::path::Path::new(p)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("")
-                            .to_string();
-                        Ok(Value::String(name))
-                    }
-                    _ => Err(format!("No member '{}' on path", member))
+            Value::Path(p) => match member {
+                "name" => {
+                    let name = std::path::Path::new(p)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Ok(Value::String(name))
                 }
-            }
+                _ => Err(format!("No member '{}' on path", member)),
+            },
             Value::Record(map) => {
                 if let Some(val) = map.get(member) {
                     return Ok(val.clone());
@@ -85,13 +84,11 @@ impl Value {
                     .map(|(_, v)| v.clone())
                     .ok_or_else(|| format!("No member '{}' found on record", member))
             }
-            Value::String(s) => {
-                match member {
-                    "length" => Ok(Value::Number(s.len() as f64)),
-                    _ => Err(format!("No member '{}' on string", member))
-                }
-            }
-            _ => Err(format!("Cannot access member '{}' on {:?}", member, self))
+            Value::String(s) => match member {
+                "length" => Ok(Value::Number(s.len() as f64)),
+                _ => Err(format!("No member '{}' on string", member)),
+            },
+            _ => Err(format!("Cannot access member '{}' on {:?}", member, self)),
         }
     }
 }
@@ -145,7 +142,7 @@ impl Environment {
     pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
         match self.get(name) {
             Some(Value::Function(f)) => Some(f),
-            _ => None
+            _ => None,
         }
     }
 
@@ -275,7 +272,10 @@ mod tests {
     #[test]
     pub(crate) fn as_path_returns_some_for_record_with_path_key() {
         let mut map = HashMap::new();
-        map.insert("path".to_string(), Value::String("/data/file.csv".to_string()));
+        map.insert(
+            "path".to_string(),
+            Value::String("/data/file.csv".to_string()),
+        );
         let record = Value::Record(map);
         assert_eq!(record.as_path(), Some("/data/file.csv"));
     }
@@ -343,11 +343,15 @@ mod tests {
     #[test]
     pub(crate) fn env_register_and_get_function() {
         let mut env = Environment::new();
-        let func = FunctionDef { comments: vec![],
+        let func = FunctionDef {
+            comments: vec![],
             name: "add".to_string(),
             parameters: vec!["a".to_string(), "b".to_string()],
-            body: crate::ast::FlowOrBranch::Flow(crate::ast::PipeFlow { comments: vec![],
-                source: crate::ast::Source::Expression(crate::ast::Expression::Identifier("a".to_string())),
+            body: crate::ast::FlowOrBranch::Flow(crate::ast::PipeFlow {
+                comments: vec![],
+                source: crate::ast::Source::Expression(crate::ast::Expression::Identifier(
+                    "a".to_string(),
+                )),
                 operations: vec![],
                 on_fail: None,
                 span: crate::ast::Span::default(),

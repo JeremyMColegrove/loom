@@ -4,6 +4,10 @@
   "description": "Loom language support with syntax highlighting, LSP, and run command.",
   "version": "0.1.0",
   "publisher": "loom",
+  "repository": {
+    "url": "https://github.com/JeremyMColegrove/loom",
+    "type": "github"
+  },
   "license": "MIT",
   "engines": {
     "vscode": "^1.86.0"
