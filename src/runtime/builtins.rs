@@ -43,7 +43,7 @@ impl BuiltinRegistry {
         self.functions.keys().map(|s| s.as_str()).collect()
     }
 
-    fn register_defaults(&mut self) {
+    pub(crate) fn register_defaults(&mut self) {
         // @watch directive — watches a directory/file path, returns an event record
         self.directives.insert("watch".to_string(), Box::new(|args, _pipe_val| {
             let path = args.first()

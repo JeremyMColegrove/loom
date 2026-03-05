@@ -2,36 +2,30 @@
 @import "std.csv" as csv
 @import "std.out" as stdout
 @import "logic" as util
-
 // Setup the observer on the local inbox
-@watch("./inbox/") as event >> @atomic >> [
-    
-    // Step 1: Filter to ensure we only process CSV files
-    filter(event.file.ext == "csv" && event.type == "created") >> [
-        
-        // Step 2: Complex Nested Flow
-        @read(event.file.path) >> @csv.parse as data >> [
-            
-            // Sub-Branch A: High-Value Logic
-            // Tests: Chaining external package logic in a lambda
-            filter(row >> util.is_valid(row) && row.price > 1000) as data >> [
-                stdout,
-                data >> "premium_sales.csv",
-                s"Premium record processed: " >> "activity.log"
-            ],
-            // Sub-Branch B: General Accumulator
-            // Tests: Sequential processing of the same data stream
-            filter(row >> util.is_valid(row)) >> "all_transactions.csv"
+@watch("./inbox/") as event >> filter(event.file.ext == "csv" && event.type == "created") >> @atomic >> [
+    // Step 2: read the new file, parse it as csv
+    @read(event.file.path) >> @csv.parse as data >> [
+        // get all entries that are valid (func from other lib) and price matches
+        filter(row >> util.is_valid(row) && row.price > 1000) as data >> [
+            stdout,
+            // print to screen
+            data >> "premium_sales.csv",
+            // append to file
+            // append string to file
+            \"Premium record processed: " >> "activity.log"
         ],
-
-        // Step 3: Sequential File System Operation
-        // This MUST wait for the @csv.parse handle to close before executing
-        event.file -> "./archive/" + event.file.name
-    ]
-
+        // Sub-Branch B: another filter on csv data, apped to all_transactions
+        filter(row >> util.is_valid(row)) >> "all_transactions.csv"
+    ],
+    // Step 3: move file to archive/...
+    // if any steps in @atomic fails, do this
+    event.file -> "./archive/" + event.file.name
 ] on_fail as err >> [
     // Step 4: Robust Rollback & Recovery
-    // Tests: The @atomic rollback ensures 'all_transactions.csv' isn't corrupted
+    // for error with func from othe rlib, append to error log
     util.format_alert(event.file.name, err) >> "error_log.txt",
+    // move file
     event.file -> "./quarantine/"
 ]
+

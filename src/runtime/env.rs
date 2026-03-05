@@ -162,7 +162,7 @@ mod tests {
     // ── Value::get_member ────────────────────────────────────────────────
 
     #[test]
-    fn get_member_record_existing_key() {
+    pub(crate) fn get_member_record_existing_key() {
         let mut map = HashMap::new();
         map.insert("name".to_string(), Value::String("Alice".to_string()));
         let record = Value::Record(map);
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn get_member_record_missing_key_returns_error() {
+    pub(crate) fn get_member_record_missing_key_returns_error() {
         let mut map = HashMap::new();
         map.insert("name".to_string(), Value::String("Alice".to_string()));
         let record = Value::Record(map);
@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn get_member_record_case_insensitive_fallback() {
+    pub(crate) fn get_member_record_case_insensitive_fallback() {
         let mut map = HashMap::new();
         map.insert("Name".to_string(), Value::String("Alice".to_string()));
         let record = Value::Record(map);
@@ -189,42 +189,42 @@ mod tests {
     }
 
     #[test]
-    fn get_member_path_name() {
+    pub(crate) fn get_member_path_name() {
         let val = Value::Path("/home/user/document.txt".to_string());
         let result = val.get_member("name").unwrap();
         assert!(matches!(result, Value::String(s) if s == "document.txt"));
     }
 
     #[test]
-    fn get_member_path_unknown_returns_error() {
+    pub(crate) fn get_member_path_unknown_returns_error() {
         let val = Value::Path("/home/user/document.txt".to_string());
         let result = val.get_member("size");
         assert!(result.is_err());
     }
 
     #[test]
-    fn get_member_string_length() {
+    pub(crate) fn get_member_string_length() {
         let val = Value::String("hello".to_string());
         let result = val.get_member("length").unwrap();
         assert!(matches!(result, Value::Number(n) if n == 5.0));
     }
 
     #[test]
-    fn get_member_string_unknown_returns_error() {
+    pub(crate) fn get_member_string_unknown_returns_error() {
         let val = Value::String("hello".to_string());
         let result = val.get_member("name");
         assert!(result.is_err());
     }
 
     #[test]
-    fn get_member_number_returns_error() {
+    pub(crate) fn get_member_number_returns_error() {
         let val = Value::Number(42.0);
         let result = val.get_member("anything");
         assert!(result.is_err());
     }
 
     #[test]
-    fn get_member_nested_record() {
+    pub(crate) fn get_member_nested_record() {
         let mut inner = HashMap::new();
         inner.insert("ext".to_string(), Value::String("csv".to_string()));
         let mut outer = HashMap::new();
@@ -238,7 +238,7 @@ mod tests {
     // ── Value::as_string ────────────────────────────────────────────────
 
     #[test]
-    fn as_string_variants() {
+    pub(crate) fn as_string_variants() {
         assert_eq!(Value::Path("/a/b".to_string()).as_string(), "/a/b");
         assert_eq!(Value::String("hello".to_string()).as_string(), "hello");
         assert_eq!(Value::Number(42.0).as_string(), "42");
@@ -249,13 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn as_string_integer_format() {
+    pub(crate) fn as_string_integer_format() {
         assert_eq!(Value::Number(100.0).as_string(), "100");
         assert_eq!(Value::Number(-7.0).as_string(), "-7");
     }
 
     #[test]
-    fn as_string_list() {
+    pub(crate) fn as_string_list() {
         let list = Value::List(vec![
             Value::Number(1.0),
             Value::Number(2.0),
@@ -267,13 +267,13 @@ mod tests {
     // ── Value::as_path ──────────────────────────────────────────────────
 
     #[test]
-    fn as_path_returns_some_for_path_and_string() {
+    pub(crate) fn as_path_returns_some_for_path_and_string() {
         assert_eq!(Value::Path("/a".to_string()).as_path(), Some("/a"));
         assert_eq!(Value::String("b".to_string()).as_path(), Some("b"));
     }
 
     #[test]
-    fn as_path_returns_some_for_record_with_path_key() {
+    pub(crate) fn as_path_returns_some_for_record_with_path_key() {
         let mut map = HashMap::new();
         map.insert("path".to_string(), Value::String("/data/file.csv".to_string()));
         let record = Value::Record(map);
@@ -281,14 +281,14 @@ mod tests {
     }
 
     #[test]
-    fn as_path_returns_none_for_number() {
+    pub(crate) fn as_path_returns_none_for_number() {
         assert!(Value::Number(42.0).as_path().is_none());
     }
 
     // ── Environment Scoping ─────────────────────────────────────────────
 
     #[test]
-    fn env_set_and_get() {
+    pub(crate) fn env_set_and_get() {
         let mut env = Environment::new();
         env.set("x", Value::Number(42.0));
         let val = env.get("x").unwrap();
@@ -296,13 +296,13 @@ mod tests {
     }
 
     #[test]
-    fn env_get_undefined_returns_none() {
+    pub(crate) fn env_get_undefined_returns_none() {
         let env = Environment::new();
         assert!(env.get("x").is_none());
     }
 
     #[test]
-    fn env_inner_scope_shadows_outer() {
+    pub(crate) fn env_inner_scope_shadows_outer() {
         let mut env = Environment::new();
         env.set("x", Value::Number(1.0));
         env.push_scope();
@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn env_pop_scope_restores_outer_value() {
+    pub(crate) fn env_pop_scope_restores_outer_value() {
         let mut env = Environment::new();
         env.set("x", Value::Number(1.0));
         env.push_scope();
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn env_pop_scope_does_not_remove_base_scope() {
+    pub(crate) fn env_pop_scope_does_not_remove_base_scope() {
         let mut env = Environment::new();
         env.set("x", Value::Number(1.0));
         env.pop_scope();
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn env_inner_scope_reads_outer_variables() {
+    pub(crate) fn env_inner_scope_reads_outer_variables() {
         let mut env = Environment::new();
         env.set("x", Value::Number(1.0));
         env.push_scope();
@@ -341,16 +341,18 @@ mod tests {
     }
 
     #[test]
-    fn env_register_and_get_function() {
+    pub(crate) fn env_register_and_get_function() {
         let mut env = Environment::new();
-        let func = FunctionDef {
+        let func = FunctionDef { comments: vec![],
             name: "add".to_string(),
             parameters: vec!["a".to_string(), "b".to_string()],
-            body: crate::ast::FlowOrBranch::Flow(crate::ast::PipeFlow {
+            body: crate::ast::FlowOrBranch::Flow(crate::ast::PipeFlow { comments: vec![],
                 source: crate::ast::Source::Expression(crate::ast::Expression::Identifier("a".to_string())),
                 operations: vec![],
                 on_fail: None,
+                span: crate::ast::Span::default(),
             }),
+            span: crate::ast::Span::default(),
         };
         env.register_function(func);
         assert!(env.get_function("add").is_some());
@@ -358,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn env_extract_globals() {
+    pub(crate) fn env_extract_globals() {
         let mut env = Environment::new();
         env.set("global_var", Value::Number(42.0));
         env.push_scope();
