@@ -1,13 +1,14 @@
 use crate::ast::*;
 use crate::runtime::Runtime;
 use crate::runtime::env::Value;
+use crate::runtime::error::{RuntimeError, RuntimeResult};
 use log::warn;
 
 impl Runtime {
     pub fn execute_flow<'a>(
         &'a mut self,
         flow: &'a PipeFlow,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let atomic_was_active_before_source = self.atomic_active;
             if let Source::Directive(directive) = &flow.source {
@@ -45,13 +46,18 @@ impl Runtime {
         flow: &'a PipeFlow,
         mut current_value: Value,
         atomic_started_here_initial: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut atomic_started_here = atomic_started_here_initial;
 
             for (op, dest) in &flow.operations {
                 let was_active = self.atomic_active;
-                let result = self.eval_destination(op, dest, current_value.clone()).await;
+                let force_backup = if matches!(op, PipeOp::Force) {
+                    Some(current_value.clone())
+                } else {
+                    None
+                };
+                let result = self.eval_destination(op, dest, current_value).await;
                 // Detect if @atomic was activated by this operation
                 if !atomic_started_here && !was_active && self.atomic_active {
                     atomic_started_here = true;
@@ -67,6 +73,8 @@ impl Runtime {
                         match op {
                             PipeOp::Force => {
                                 warn!("force pipe ignored downstream error: {}", e);
+                                current_value = force_backup
+                                    .expect("force backup must exist for force operation");
                             }
                             PipeOp::Safe | PipeOp::Move => {
                                 if let Some(on_fail) = &flow.on_fail {
@@ -91,7 +99,7 @@ impl Runtime {
         op: &'a PipeOp,
         dest: &'a Destination,
         pipe_val: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             match dest {
                 Destination::Directive(directive) => {
@@ -152,8 +160,8 @@ impl Runtime {
     pub(crate) fn handle_on_fail<'a>(
         &'a mut self,
         on_fail: &'a OnFail,
-        error: &'a str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+        error: &'a RuntimeError,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             self.env.push_scope();
 
@@ -176,7 +184,7 @@ impl Runtime {
     pub(crate) fn execute_branch<'a>(
         &'a mut self,
         branch: &'a Branch,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut last_value = Value::Null;
             for item in &branch.items {
@@ -192,7 +200,7 @@ impl Runtime {
         &'a mut self,
         branch: &'a Branch,
         input: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut last_value = input.clone();
             for item in &branch.items {
@@ -201,11 +209,11 @@ impl Runtime {
                 };
                 self.env.push_scope();
                 self.env.set("_", input.clone());
-                let result = self.run_branch_flow_with_input(flow, input.clone()).await;
+                let result = self.run_branch_flow_with_input(flow, &input).await;
                 self.env.pop_scope();
                 match result {
                     Ok(v) => last_value = v,
-                    Err(e) if e == "Filter condition failed" => continue,
+                    Err(RuntimeError::FilterRejected) => continue,
                     Err(e) => return Err(e),
                 }
             }
@@ -216,12 +224,12 @@ impl Runtime {
     pub(crate) fn run_branch_flow_with_input<'a>(
         &'a mut self,
         flow: &'a PipeFlow,
-        input: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+        input: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             if flow.operations.is_empty() {
                 if let Source::Expression(Expression::Literal(Literal::Path(path))) = &flow.source {
-                    return self.write_or_move_path(&PipeOp::Safe, path, &input);
+                    return self.write_or_move_path(&PipeOp::Safe, path, input);
                 }
             }
             let mut current_value = self
@@ -237,17 +245,20 @@ impl Runtime {
     pub(crate) fn eval_branch_source_with_input<'a>(
         &'a mut self,
         source: &'a Source,
-        input: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+        input: &'a Value,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             match source {
                 Source::Directive(directive) => {
-                    self.eval_directive_with_pipe(directive, input).await
+                    self.eval_directive_with_pipe(directive, input.clone())
+                        .await
                 }
-                Source::FunctionCall(call) => self.eval_function_call_with_pipe(call, input).await,
+                Source::FunctionCall(call) => {
+                    self.eval_function_call_with_pipe(call, input.clone()).await
+                }
                 Source::Expression(expr) => match expr {
                     Expression::Literal(Literal::Path(path)) => Ok(Value::Path(path.clone())),
-                    Expression::Identifier(name) if name == "_" => Ok(input),
+                    Expression::Identifier(name) if name == "_" => Ok(input.clone()),
                     _ => self.eval_expression(expr).await,
                 },
             }
@@ -257,7 +268,7 @@ impl Runtime {
     pub(crate) fn eval_source<'a>(
         &'a mut self,
         source: &'a Source,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             match source {
                 Source::Directive(directive) => self.eval_directive(directive).await,

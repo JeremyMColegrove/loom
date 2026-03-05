@@ -1,13 +1,15 @@
 use crate::ast::*;
+use crate::builtin_spec::{DIRECTIVE_ATOMIC, DIRECTIVE_FILTER, DIRECTIVE_MAP};
 use crate::runtime::Runtime;
 use crate::runtime::env::Value;
+use crate::runtime::error::{RuntimeError, RuntimeResult};
 use log::debug;
 
 impl Runtime {
     pub(crate) fn eval_directive<'a>(
         &'a mut self,
         directive: &'a DirectiveFlow,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         self.eval_directive_with_pipe(directive, Value::Null)
     }
 
@@ -15,7 +17,7 @@ impl Runtime {
         &'a mut self,
         directive: &'a DirectiveFlow,
         pipe_val: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut args = Vec::new();
             for arg in &directive.arguments {
@@ -38,7 +40,7 @@ impl Runtime {
                 }
             );
 
-            if directive.name == "atomic" {
+            if directive.name == DIRECTIVE_ATOMIC {
                 if !self.atomic_active {
                     self.begin_atomic()?;
                 }
@@ -48,7 +50,7 @@ impl Runtime {
                 return Ok(pipe_val);
             }
 
-            if directive.name == "filter" {
+            if directive.name == DIRECTIVE_FILTER {
                 let list_input = match &pipe_val {
                     Value::Record(map) => map.get("rows").cloned().unwrap_or(pipe_val.clone()),
                     _ => pipe_val.clone(),
@@ -62,7 +64,7 @@ impl Runtime {
                 return Ok(result);
             }
 
-            if directive.name == "map" {
+            if directive.name == DIRECTIVE_MAP {
                 let list_input = match &pipe_val {
                     Value::Record(map) => map.get("rows").cloned().unwrap_or(pipe_val.clone()),
                     _ => pipe_val.clone(),
@@ -85,7 +87,10 @@ impl Runtime {
                 record.insert("rows".to_string(), Value::List(vec![]));
                 Value::Record(record)
             } else {
-                return Err(format!("Unknown directive: @{}", directive.name));
+                return Err(RuntimeError::message(format!(
+                    "Unknown directive: @{}",
+                    directive.name
+                )));
             };
 
             // Bind the alias if present

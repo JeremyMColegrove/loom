@@ -1,13 +1,15 @@
 use crate::ast::*;
 use crate::runtime::Runtime;
 use crate::runtime::env::Value;
+use crate::runtime::error::{RuntimeError, RuntimeResult};
 use log::{debug, warn};
+use std::sync::Arc;
 
 impl Runtime {
     pub(crate) fn eval_function_call<'a>(
         &'a mut self,
         call: &'a FunctionCall,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut args = Vec::new();
             for arg in &call.arguments {
@@ -21,7 +23,7 @@ impl Runtime {
         &'a mut self,
         call: &'a FunctionCall,
         pipe_val: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut args: Vec<Value> = vec![pipe_val];
             for arg in &call.arguments {
@@ -35,8 +37,8 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn resolve_function(&self, name: &str) -> Option<FunctionDef> {
-        if let Some(func_def) = self.env.get_function(name).cloned() {
+    pub(crate) fn resolve_function(&self, name: &str) -> Option<Arc<FunctionDef>> {
+        if let Some(func_def) = self.env.get_function(name) {
             return Some(func_def);
         }
 
@@ -61,7 +63,7 @@ impl Runtime {
         &'a mut self,
         name: &'a str,
         args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             if name == "filter" {
                 return self.call_filter(args).await;
@@ -72,7 +74,7 @@ impl Runtime {
 
             // Check builtins first
             if let Some(handler) = self.builtins.get_builtin_function(name) {
-                return handler(args);
+                return Ok(handler(args)?);
             }
 
             // Check user-defined functions
@@ -98,7 +100,7 @@ impl Runtime {
                 self.env.pop_scope();
                 result
             } else {
-                Err(format!("Unknown function: {}", name))
+                Err(RuntimeError::message(format!("Unknown function: {}", name)))
             }
         })
     }
@@ -106,14 +108,14 @@ impl Runtime {
     pub(crate) fn call_filter<'a>(
         &'a mut self,
         args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             if args.len() == 1 {
                 let condition = args.first().cloned().unwrap_or(Value::Null);
                 if self.is_truthy(&condition) {
                     return Ok(Value::Boolean(true));
                 } else {
-                    return Err("Filter condition failed".to_string());
+                    return Err(RuntimeError::FilterRejected);
                 }
             }
 
@@ -128,14 +130,18 @@ impl Runtime {
                 if b {
                     return Ok(args.first().cloned().unwrap_or(Value::Null));
                 } else {
-                    return Err("Filter condition failed".to_string());
+                    return Err(RuntimeError::FilterRejected);
                 }
             }
 
             let (items, lambda) = match (list, condition_or_lambda) {
                 (Value::List(items), Value::Lambda(lambda)) => (items, lambda),
                 (Value::List(items), _) => return Ok(Value::List(items)),
-                _ => return Err("filter expects a list and a lambda, or a condition".to_string()),
+                _ => {
+                    return Err(RuntimeError::message(
+                        "filter expects a list and a lambda, or a condition",
+                    ));
+                }
             };
 
             let mut filtered = Vec::new();
@@ -161,7 +167,7 @@ impl Runtime {
     pub(crate) fn call_map<'a>(
         &'a mut self,
         args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let list = args.first().cloned().unwrap_or(Value::Null);
             let list = match list {
@@ -172,15 +178,20 @@ impl Runtime {
             let (items, lambda) = match (list, lambda) {
                 (Value::List(items), Value::Lambda(lambda)) => (items, lambda),
                 (Value::List(items), _) => return Ok(Value::List(items)),
-                _ => return Err("map expects a list as first argument".to_string()),
+                _ => {
+                    return Err(RuntimeError::message(
+                        "map expects a list as first argument",
+                    ));
+                }
             };
 
             let mut mapped = Vec::new();
             for item in items {
                 self.env.push_scope();
                 self.env.set(&lambda.param, item);
-                let mapped_item = self.eval_expression(&lambda.body).await?;
+                let mapped_item = self.eval_expression(&lambda.body).await;
                 self.env.pop_scope();
+                let mapped_item = mapped_item?;
                 mapped.push(mapped_item);
             }
             Ok(Value::List(mapped))

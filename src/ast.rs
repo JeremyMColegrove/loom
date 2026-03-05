@@ -111,7 +111,7 @@ pub struct DirectiveFlow {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BranchItem {
-    Flow(PipeFlow),
+    Flow(Box<PipeFlow>),
     Comment(String),
 }
 

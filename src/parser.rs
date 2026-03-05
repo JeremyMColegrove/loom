@@ -214,7 +214,10 @@ fn build_branch(pair: Pair<Rule>) -> Result<Branch, ParseError> {
         for comment in comments.drain(..) {
             items.push(BranchItem::Comment(comment));
         }
-        items.push(BranchItem::Flow(build_pipe_flow(next, Vec::new())?));
+        items.push(BranchItem::Flow(Box::new(build_pipe_flow(
+            next,
+            Vec::new(),
+        )?)));
     }
     // Handle any trailing comments
     for comment in comments {

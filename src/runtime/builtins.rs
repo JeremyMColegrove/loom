@@ -1,3 +1,7 @@
+use crate::builtin_spec::{
+    DIRECTIVE_ATOMIC, DIRECTIVE_CHUNK, DIRECTIVE_CSV_PARSE, DIRECTIVE_LINES, DIRECTIVE_LOG,
+    DIRECTIVE_READ, DIRECTIVE_WATCH, DIRECTIVE_WRITE,
+};
 use crate::runtime::env::Value;
 use csv::{ReaderBuilder, Trim};
 use std::collections::HashMap;
@@ -46,7 +50,7 @@ impl BuiltinRegistry {
     pub(crate) fn register_defaults(&mut self) {
         // @watch directive — watches a directory/file path, returns an event record
         self.directives.insert(
-            "watch".to_string(),
+            DIRECTIVE_WATCH.to_string(),
             Box::new(|args, _pipe_val| {
                 let path = args
                     .first()
@@ -62,13 +66,13 @@ impl BuiltinRegistry {
 
         // @atomic directive — marks a transaction boundary, passes through value
         self.directives.insert(
-            "atomic".to_string(),
+            DIRECTIVE_ATOMIC.to_string(),
             Box::new(|_args, pipe_val| Ok(pipe_val)),
         );
 
         // @chunk directive — splits data into chunks
         self.directives.insert(
-            "chunk".to_string(),
+            DIRECTIVE_CHUNK.to_string(),
             Box::new(|args, pipe_val| {
                 let size = args
                     .first()
@@ -96,7 +100,7 @@ impl BuiltinRegistry {
 
         // @lines directive — reads a file line-by-line into a list
         self.directives.insert(
-            "lines".to_string(),
+            DIRECTIVE_LINES.to_string(),
             Box::new(|args, pipe_val| {
                 let source = args.first().cloned().unwrap_or(pipe_val);
                 let source_path = source
@@ -115,7 +119,7 @@ impl BuiltinRegistry {
 
         // @csv.parse directive — parses CSV data into rows keyed by header names
         self.directives.insert(
-            "csv.parse".to_string(),
+            DIRECTIVE_CSV_PARSE.to_string(),
             Box::new(|_args, pipe_val| {
                 let (source, csv_text) = match &pipe_val {
                     Value::Path(path) => {
@@ -216,7 +220,7 @@ impl BuiltinRegistry {
 
         // @log directive — logs a value
         self.directives.insert(
-            "log".to_string(),
+            DIRECTIVE_LOG.to_string(),
             Box::new(|_args, pipe_val| {
                 println!("{}", pipe_val.as_string());
                 Ok(pipe_val)
@@ -225,7 +229,7 @@ impl BuiltinRegistry {
 
         // @read directive — reads a file from arg or piped value
         self.directives.insert(
-            "read".to_string(),
+            DIRECTIVE_READ.to_string(),
             Box::new(|args, pipe_val| {
                 let source = args.first().cloned().unwrap_or(pipe_val);
                 let path = extract_read_path(&source).ok_or_else(|| {
@@ -240,7 +244,7 @@ impl BuiltinRegistry {
 
         // @write directive — writes to a file
         self.directives.insert(
-            "write".to_string(),
+            DIRECTIVE_WRITE.to_string(),
             Box::new(|args, pipe_val| {
                 let path = args
                     .first()

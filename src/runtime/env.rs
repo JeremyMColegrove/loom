@@ -1,5 +1,6 @@
 use crate::ast::{FunctionDef, Lambda};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -10,7 +11,7 @@ pub enum Value {
     List(Vec<Value>),
     Record(HashMap<String, Value>),
     Lambda(Lambda),
-    Function(FunctionDef),
+    Function(Arc<FunctionDef>),
     Null,
 }
 
@@ -136,12 +137,12 @@ impl Environment {
     }
 
     pub fn register_function(&mut self, func: FunctionDef) {
-        self.set(&func.name.clone(), Value::Function(func));
+        self.set(&func.name.clone(), Value::Function(Arc::new(func)));
     }
 
-    pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
+    pub fn get_function(&self, name: &str) -> Option<Arc<FunctionDef>> {
         match self.get(name) {
-            Some(Value::Function(f)) => Some(f),
+            Some(Value::Function(f)) => Some(Arc::clone(f)),
             _ => None,
         }
     }

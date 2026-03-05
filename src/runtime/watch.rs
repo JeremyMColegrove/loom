@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::runtime::Runtime;
 use crate::runtime::env::Value;
+use crate::runtime::error::{RuntimeError, RuntimeResult};
 use notify::{
     Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::ModifyKind,
     event::RenameMode,
@@ -15,7 +16,7 @@ impl Runtime {
         &'a mut self,
         flow: &'a PipeFlow,
         watch: &'a DirectiveFlow,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             let mut evaluated = Vec::new();
             for arg in &watch.arguments {
@@ -88,7 +89,7 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn absolutize_watch_path(&self, watch_path: &str) -> Result<String, String> {
+    pub(crate) fn absolutize_watch_path(&self, watch_path: &str) -> RuntimeResult<String> {
         let mut path = std::path::PathBuf::from(watch_path);
         if !path.is_absolute() {
             if let Some(dir) = &self.script_dir {
@@ -97,7 +98,13 @@ impl Runtime {
         }
         std::fs::canonicalize(&path)
             .map(|p| p.to_string_lossy().to_string())
-            .map_err(|e| format!("Failed to resolve watch path '{}': {}", path.display(), e))
+            .map_err(|e| {
+                RuntimeError::message(format!(
+                    "Failed to resolve watch path '{}': {}",
+                    path.display(),
+                    e
+                ))
+            })
     }
 
     pub(crate) fn run_watch_event<'a>(
@@ -105,7 +112,7 @@ impl Runtime {
         flow: &'a PipeFlow,
         watch: &'a DirectiveFlow,
         event: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
             if let Some(alias) = &watch.alias {
                 self.env.set(alias, event.clone());
@@ -118,7 +125,7 @@ impl Runtime {
         &self,
         file_path: &str,
         event_type: &str,
-    ) -> Result<Value, String> {
+    ) -> RuntimeResult<Value> {
         let metadata = std::fs::metadata(file_path).ok();
         let modified = metadata
             .as_ref()
@@ -163,7 +170,7 @@ impl Runtime {
         Ok(Value::Record(event))
     }
 
-    fn parse_watch_options(&self, args: Vec<Value>) -> Result<WatchOptions, String> {
+    fn parse_watch_options(&self, args: Vec<Value>) -> RuntimeResult<WatchOptions> {
         let mut path = ".".to_string();
         let mut recursive = false;
         let mut debounce_ms = 200_u64;
@@ -180,7 +187,9 @@ impl Runtime {
                 Value::Boolean(flag) => recursive = *flag,
                 Value::Number(ms) => {
                     if !ms.is_finite() || *ms < 0.0 {
-                        return Err("@watch debounce must be a non-negative number".to_string());
+                        return Err(RuntimeError::message(
+                            "@watch debounce must be a non-negative number",
+                        ));
                     }
                     debounce_ms = (*ms as u64).max(10);
                 }
@@ -194,10 +203,9 @@ impl Runtime {
                                 debounce_ms = (*ms as u64).max(10);
                             }
                             _ => {
-                                return Err(
-                                    "@watch option `debounce_ms` must be a non-negative number"
-                                        .to_string(),
-                                );
+                                return Err(RuntimeError::message(
+                                    "@watch option `debounce_ms` must be a non-negative number",
+                                ));
                             }
                         }
                     }
