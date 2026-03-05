@@ -1,0 +1,37 @@
+// main.loom - The Robustness Stress Test
+@import "std.csv" as csv
+@import "std.out" as stdout
+@import "logic" as util
+
+// Setup the observer on the local inbox
+@watch("./inbox/") as event >> @atomic >> [
+    
+    // Step 1: Filter to ensure we only process CSV files
+    filter(event.file.ext == "csv" && event.type == "created") >> [
+        
+        // Step 2: Complex Nested Flow
+        @read(event.file.path) >> @csv.parse as data >> [
+            
+            // Sub-Branch A: High-Value Logic
+            // Tests: Chaining external package logic in a lambda
+            filter(row >> util.is_valid(row) && row.price > 1000) as data >> [
+                stdout,
+                data >> "premium_sales.csv",
+                s"Premium record processed: " >> "activity.log"
+            ],
+            // Sub-Branch B: General Accumulator
+            // Tests: Sequential processing of the same data stream
+            filter(row >> util.is_valid(row)) >> "all_transactions.csv"
+        ],
+
+        // Step 3: Sequential File System Operation
+        // This MUST wait for the @csv.parse handle to close before executing
+        event.file -> "./archive/" + event.file.name
+    ]
+
+] on_fail as err >> [
+    // Step 4: Robust Rollback & Recovery
+    // Tests: The @atomic rollback ensures 'all_transactions.csv' isn't corrupted
+    util.format_alert(event.file.name, err) >> "error_log.txt",
+    event.file -> "./quarantine/"
+]

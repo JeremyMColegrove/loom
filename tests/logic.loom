@@ -1,0 +1,7 @@
+// logic.loom - Custom Utilities for the Loom Stress Test
+
+// A standard action for validation
+// Tests: Binary logic and property access
+is_valid(row) => row.id != null && row.price > 0
+
+format_alert(file_name, error_msg) => "CRITICAL: " + file_name + " failed with: " + error_msg

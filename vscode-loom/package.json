@@ -1,0 +1,97 @@
+{
+  "name": "loom-language",
+  "displayName": "Loom Language",
+  "description": "Loom language support with syntax highlighting, LSP, and run command.",
+  "version": "0.1.0",
+  "publisher": "loom",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:loom",
+    "onCommand:loom.runCurrentFile"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "loom",
+        "aliases": [
+          "Loom",
+          "loom"
+        ],
+        "extensions": [
+          ".loom"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "loom",
+        "scopeName": "source.loom",
+        "path": "./syntaxes/loom.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "loom",
+        "path": "./snippets/loom.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "loom.runCurrentFile",
+        "title": "Loom: Run Current File",
+        "category": "Loom"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "loom.runCurrentFile",
+          "when": "resourceExtname == .loom",
+          "group": "navigation@100"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Loom",
+      "properties": {
+        "loom.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the Loom binary to use for LSP and run command. If empty, the extension uses bundled binaries first, then PATH."
+        },
+        "loom.server.extraArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional arguments passed to the Loom binary when starting the LSP server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "prepackage": "npm run compile",
+    "stage-binary": "bash ./scripts/stage-binary.sh",
+    "package": "npx @vscode/vsce package",
+    "build:vsix": "bash ./scripts/build-vsix.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
