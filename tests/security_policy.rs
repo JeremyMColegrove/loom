@@ -156,6 +156,7 @@ async fn restricted_mode_disables_dangerous_operations() {
             arguments: vec![Expression::Literal(Literal::Path(
                 dir.path().to_string_lossy().to_string(),
             ))],
+            named_arguments: vec![],
             alias: None,
         }),
         operations: vec![],

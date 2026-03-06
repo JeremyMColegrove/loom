@@ -43,7 +43,7 @@ With boundaries, policy is easier to write and review.
 
 ```loom
 @import "lib/logic" as util
-@read("./inbox/orders.csv") >> @csv.parse >> filter(row >> util.is_valid(row)) >> "./out/orders-clean.csv"
+@read(\"./inbox/orders.csv") >> @csv.parse >> filter(row >> util.is_valid(row)) >> "./out/orders-clean.csv"
 ```
 
 This makes module code reusable while keeping IO paths explicit and policy-friendly.

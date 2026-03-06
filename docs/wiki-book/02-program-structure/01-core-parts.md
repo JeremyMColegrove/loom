@@ -36,7 +36,7 @@ Because these boundaries are visible in syntax, it is easier to audit scripts an
 ## Example
 
 ```loom
-@read("./inbox/customers.csv") >> @csv.parse as data >> filter(row >> row.email != "") >> "./out/clean-customers.csv"
+@read(\"./inbox/customers.csv") >> @csv.parse as data >> filter(row >> row.email != \"") >> "./out/clean-customers.csv"
 ```
 
 This single line already shows source, transformations, and destination clearly.

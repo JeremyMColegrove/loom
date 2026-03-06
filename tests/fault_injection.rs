@@ -130,6 +130,7 @@ async fn watch_option_validation_rejects_invalid_debounce() {
             Expression::Literal(Literal::Path(".".to_string())),
             Expression::Literal(Literal::Number(-5.0)),
         ],
+        named_arguments: vec![],
         alias: Some("event".to_string()),
     };
 

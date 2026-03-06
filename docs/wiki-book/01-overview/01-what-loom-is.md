@@ -5,7 +5,7 @@ Loom is a small language focused on one job: file processing pipelines.
 Instead of writing many lines of setup code, Loom lets you describe a flow from left to right:
 
 ```loom
-@read("./inbox/orders.csv") >> @csv.parse >> filter(row >> row.amount > 1000) >> "./out/high-value.csv"
+@read(\"./inbox/orders.csv") >> @csv.parse >> filter(row >> row.amount > 1000) >> "./out/high-value.csv"
 ```
 
 You can read this like a sentence:
@@ -13,6 +13,11 @@ You can read this like a sentence:
 - Parse CSV.
 - Keep only high-value rows.
 - Write the result.
+
+Important syntax note:
+- Plain quotes (`"..."`) are file/path literals in Loom.
+- In argument positions, plain quotes cause Loom to read that file and pass file contents.
+- Use escaped strings (`\"..."`) for literal text values.
 
 ## What Loom is optimized for
 

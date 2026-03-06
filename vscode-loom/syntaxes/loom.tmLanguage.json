@@ -30,7 +30,7 @@
     "escaped-string": {
       "name": "string.quoted.double.prefixed.loom",
       "begin": "\\\\\"",
-      "end": "\"",
+      "end": "(?<!\\\\)\"",
       "patterns": [
         {
           "name": "constant.character.escape.loom",

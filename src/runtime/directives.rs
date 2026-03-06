@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::builtin_spec::{
     DIRECTIVE_ATOMIC, DIRECTIVE_CSV_PARSE, DIRECTIVE_FILTER, DIRECTIVE_LINES, DIRECTIVE_MAP,
-    DIRECTIVE_READ, DIRECTIVE_WRITE,
+    DIRECTIVE_READ, DIRECTIVE_SECRET, DIRECTIVE_WRITE,
 };
 use crate::runtime::Runtime;
 use crate::runtime::builtins::{extract_read_path, normalize_csv_for_parsing};
@@ -25,10 +25,9 @@ impl Runtime {
         pipe_val: Value,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
         Box::pin(async move {
-            let mut args = Vec::new();
-            for arg in &directive.arguments {
-                args.push(self.eval_expression(arg).await?);
-            }
+            let (args, named_args) = self
+                .eval_call_arguments(&directive.arguments, &directive.named_arguments)
+                .await?;
 
             debug!(
                 "evaluating directive: @{}{}",
@@ -85,7 +84,11 @@ impl Runtime {
             }
 
             if directive.name == DIRECTIVE_READ {
-                let source = args.first().cloned().unwrap_or(pipe_val);
+                let source = named_args
+                    .get("path")
+                    .cloned()
+                    .or_else(|| args.first().cloned())
+                    .unwrap_or(pipe_val);
                 let path = extract_read_path(&source).ok_or_else(|| {
                     RuntimeError::message(
                         "@read expects a path, event, or variable containing a path",
@@ -95,16 +98,21 @@ impl Runtime {
             }
 
             if directive.name == DIRECTIVE_WRITE {
-                let path = args
-                    .first()
+                let path = named_args
+                    .get("path")
                     .map(|v| v.as_string())
+                    .or_else(|| args.first().map(|v| v.as_string()))
                     .unwrap_or_else(|| "output.txt".to_string());
                 self.write_path(&path, &pipe_val.as_string())?;
                 return Ok(Value::String(path));
             }
 
             if directive.name == DIRECTIVE_LINES {
-                let source = args.first().cloned().unwrap_or(pipe_val);
+                let source = named_args
+                    .get("path")
+                    .cloned()
+                    .or_else(|| args.first().cloned())
+                    .unwrap_or(pipe_val);
                 let source_path = source
                     .as_path()
                     .ok_or_else(|| RuntimeError::message("@lines expects a file path source"))?
@@ -117,8 +125,29 @@ impl Runtime {
                 return Ok(Value::List(lines));
             }
 
+            if directive.name == DIRECTIVE_SECRET {
+                let resolved = self.resolve_secret_from_call_args(&args, &named_args)?;
+                let value = Value::String(resolved);
+                if let Some(alias) = &directive.alias {
+                    self.env.set(alias, value.clone());
+                }
+                return Ok(value);
+            }
+
             if directive.name == DIRECTIVE_CSV_PARSE {
                 return self.parse_csv_from_pipe(pipe_val);
+            }
+
+            if directive.name == "http.post" {
+                return self.http_post(args, named_args, pipe_val).await;
+            }
+
+            if let Some(unknown_name) = directive.name.strip_prefix("http.") {
+                let _ = unknown_name;
+                return Err(RuntimeError::message(format!(
+                    "Unknown directive: @{}",
+                    directive.name
+                )));
             }
 
             let result = if let Some(handler) = self.builtins.get_directive(&directive.name) {
@@ -144,9 +173,7 @@ impl Runtime {
     fn parse_csv_from_pipe(&mut self, pipe_val: Value) -> RuntimeResult<Value> {
         let (source, csv_text) = match &pipe_val {
             Value::Path(path) => (path.clone(), self.read_text_path(path)?),
-            Value::String(text) => {
-                (text.clone(), text.clone())
-            }
+            Value::String(text) => (text.clone(), text.clone()),
             Value::List(items) => {
                 let text = items
                     .iter()

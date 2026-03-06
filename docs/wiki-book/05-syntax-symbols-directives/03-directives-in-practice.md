@@ -12,17 +12,23 @@ Known runtime directives:
 - `@log`
 - `@read(path)`
 - `@write(path)`
+- `@secret(key)`
 - `@filter(predicate)`
 - `@map(transform)`
 
 ## Path literals vs `@read(...)`
+
+Important language rule:
+- Plain quotes (`"..."`) are file-path literals in Loom.
+- In argument positions, plain quotes trigger file-read semantics.
+- Use escaped strings (`\"..."`) for literal text arguments.
 
 Use plain path literals (`"..."`) when you already have a static file path in code.
 
 Example:
 
 ```loom
-"./inbox/my_file.txt" >> stdout
+"./inbox/my_file.txt" >> @read >> stdout
 ```
 
 Use `@read(...)` when the path comes from a variable/record at runtime (for example a watch event).
@@ -30,10 +36,17 @@ Use `@read(...)` when the path comes from a variable/record at runtime (for exam
 Example:
 
 ```loom
-@watch("./inbox") as event >> @read(event.file.path) >> stdout
+@watch(\"./inbox") as event >> @read(event.file.path) >> stdout
 ```
 
 Use escaped string literals (`\"..."`) or template literals (`` `...` ``) when you want text values instead of path values.
+
+`@secret(...)` examples:
+
+```loom
+@secret("API_KEY_FILE")   // reads file API_KEY_FILE; file contents are used as key text
+@secret(\"API_KEY\")      // uses literal key API_KEY
+```
 
 ## 1) `@watch(path, recursive?, debounce_ms?)`
 
@@ -58,7 +71,7 @@ Defaults and normalization:
 Event alias pattern:
 
 ```loom
-@watch("./inbox") as event >> filter(event.type == "created") >> @read(event.file.path)
+@watch(\"./inbox") as event >> filter(event.type == \"created") >> @read(event.file.path)
 ```
 
 Event record shape (runtime):
@@ -83,6 +96,10 @@ Accepted source values:
 - Explicit path argument.
 - Piped path/string.
 - Piped record containing `path` or `file` path fields.
+
+Argument note:
+- Use `@read(\"./inbox/file.csv")` for a literal path argument.
+- `@read("./inbox/file.csv")` first reads `./inbox/file.csv` as an argument value, then treats that file content as a path.
 
 Typical use:
 - Dynamic runtime path extraction (`event.file.path`, variable-held paths).
@@ -146,7 +163,27 @@ Failure cases:
 - Header/row field count mismatch.
 - Source without usable file/text.
 
-## 6) `@atomic`
+## 6) `@secret(key)`
+
+Purpose:
+- Resolves a secret string by key.
+
+Lookup order:
+- Reads `.env` in the script directory (or current working directory when no script directory is set).
+- Falls back to process environment variables.
+- Raises a runtime error when the key is missing in both.
+
+Examples:
+
+```loom
+@secret(\"API_TOKEN\") >> "./out/token.txt"
+\"hello: " + @secret(\"NAME\") >> "./out/greeting.txt"
+```
+
+Security note:
+- `.env` is treated as a local configuration source; inherited environment variables are fallback only.
+
+## 7) `@atomic`
 
 Purpose:
 - Transaction boundary for file mutations.
@@ -158,13 +195,13 @@ Behavior:
 Typical use:
 
 ```loom
-@watch("./inbox") as event >> @atomic >> [
+@watch(\"./inbox") as event >> @atomic >> [
   @read(event.file.path) >> @csv.parse >> "./out/clean.csv",
   event.file -> "./archive/"
 ] on_fail as err >> event.file -> "./quarantine/"
 ```
 
-## 7) `@log`
+## 8) `@log`
 
 Purpose:
 - Debug inspection.
@@ -173,18 +210,18 @@ Behavior:
 - Prints current value.
 - Passes value through unchanged.
 
-## 8) `@filter(...)` and `@map(...)` directive forms
+## 9) `@filter(...)` and `@map(...)` directive forms
 
 These are directive forms of built-in functions.
 
 Examples:
 
 ```loom
-@read("./inbox/orders.csv") >> @csv.parse >> @filter(row >> row.amount > 1000)
-@read("./inbox/orders.csv") >> @csv.parse >> @map(row >> row.email)
+@read(\"./inbox/orders.csv") >> @csv.parse >> @filter(row >> row.amount > 1000)
+@read(\"./inbox/orders.csv") >> @csv.parse >> @map(row >> row.email)
 ```
 
-## 9) `@import` note
+## 10) `@import` note
 
 `@import` is a top-level statement (module loading), not a runtime pipe directive.
 

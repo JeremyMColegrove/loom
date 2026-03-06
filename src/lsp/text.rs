@@ -66,5 +66,6 @@ pub(crate) fn get_word_at_position(text: &str, line: u32, character: u32) -> Str
     chars[start..end].iter().collect()
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/lsp_text_tests.rs"));
+#[cfg(test)]
+#[path = "../../tests/unit/lsp_text_tests.rs"]
+mod lsp_text_tests;

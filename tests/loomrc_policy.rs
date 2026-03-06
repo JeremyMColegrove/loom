@@ -24,7 +24,10 @@ async fn allow_all_policy_allows_imports_without_explicit_path_lists() {
     apply_runtime_policy(&mut runtime, Some(policy_path.as_path()), None)
         .expect("apply policy should succeed");
 
-    runtime.execute(&program).await.expect("import should succeed");
+    runtime
+        .execute(&program)
+        .await
+        .expect("import should succeed");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -56,7 +59,10 @@ async fn wildcard_path_lists_allow_external_imports() {
     apply_runtime_policy(&mut runtime, Some(policy_path.as_path()), None)
         .expect("apply policy should succeed");
 
-    runtime.execute(&program).await.expect("import should succeed");
+    runtime
+        .execute(&program)
+        .await
+        .expect("import should succeed");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -84,11 +90,14 @@ async fn allow_all_with_restrictive_import_paths_only_limits_imports() {
     )
     .expect("write policy");
 
-    let read_program = loom::parser::parse(&format!("\"{}\" >> @read", data_path.to_string_lossy()))
-        .expect("parse read program");
-    let import_program =
-        loom::parser::parse(&format!("@import \"{}\" as lib", module_path.to_string_lossy()))
-            .expect("parse import program");
+    let read_program =
+        loom::parser::parse(&format!("\"{}\" >> @read", data_path.to_string_lossy()))
+            .expect("parse read program");
+    let import_program = loom::parser::parse(&format!(
+        "@import \"{}\" as lib",
+        module_path.to_string_lossy()
+    ))
+    .expect("parse import program");
 
     let mut runtime =
         loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
@@ -175,12 +184,16 @@ async fn import_globs_allow_matching_modules_and_block_nonmatching() {
     )
     .expect("write policy");
 
-    let allowed_program =
-        loom::parser::parse(&format!("@import \"{}\" as lib", allowed_module.to_string_lossy()))
-            .expect("parse allowed import");
-    let denied_program =
-        loom::parser::parse(&format!("@import \"{}\" as lib", denied_module.to_string_lossy()))
-            .expect("parse denied import");
+    let allowed_program = loom::parser::parse(&format!(
+        "@import \"{}\" as lib",
+        allowed_module.to_string_lossy()
+    ))
+    .expect("parse allowed import");
+    let denied_program = loom::parser::parse(&format!(
+        "@import \"{}\" as lib",
+        denied_module.to_string_lossy()
+    ))
+    .expect("parse denied import");
 
     let mut runtime =
         loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
@@ -224,18 +237,15 @@ async fn allow_all_with_restrictive_write_paths_only_limits_writes() {
     )
     .expect("write policy");
 
-    let read_program = loom::parser::parse(&format!("\"{}\" >> @read", input_path.to_string_lossy()))
-        .expect("parse read program");
-    let write_allowed_program = loom::parser::parse(&format!(
-        "42 >> \"{}\"",
-        allowed_output.to_string_lossy()
-    ))
-    .expect("parse allowed write program");
-    let write_denied_program = loom::parser::parse(&format!(
-        "42 >> \"{}\"",
-        denied_output.to_string_lossy()
-    ))
-    .expect("parse denied write program");
+    let read_program =
+        loom::parser::parse(&format!("\"{}\" >> @read", input_path.to_string_lossy()))
+            .expect("parse read program");
+    let write_allowed_program =
+        loom::parser::parse(&format!("42 >> \"{}\"", allowed_output.to_string_lossy()))
+            .expect("parse allowed write program");
+    let write_denied_program =
+        loom::parser::parse(&format!("42 >> \"{}\"", denied_output.to_string_lossy()))
+            .expect("parse denied write program");
 
     let mut runtime =
         loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
@@ -305,9 +315,8 @@ async fn restricted_trust_mode_from_policy_blocks_writes() {
     )
     .expect("write policy");
 
-    let program =
-        loom::parser::parse(&format!("42 >> \"{}\"", output.to_string_lossy()))
-            .expect("parse write program");
+    let program = loom::parser::parse(&format!("42 >> \"{}\"", output.to_string_lossy()))
+        .expect("parse write program");
 
     let mut runtime =
         loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
@@ -355,4 +364,83 @@ async fn relative_glob_paths_are_resolved_from_policy_directory() {
         .execute(&program)
         .await
         .expect("relative glob should resolve from policy directory");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn network_hosts_allows_http_post_when_host_matches() {
+    let script_dir = tempdir().expect("script dir");
+    let url = "mock://allowed.local/post?echo_body=1".to_string();
+    let host = url
+        .strip_prefix("mock://")
+        .expect("url should have host")
+        .split('/')
+        .next()
+        .expect("host")
+        .to_string();
+
+    let policy_path = script_dir.path().join(".loomrc.json");
+    std::fs::write(
+        &policy_path,
+        format!(
+            r#"{{
+                "version":1,
+                "trust_mode":"trusted",
+                "allow_all":false,
+                "network_hosts":["{}"]
+            }}"#,
+            host
+        ),
+    )
+    .expect("write policy");
+
+    let source = format!(
+        "@import \"std.http\" as http\n42 >> @http.post(\\\"{}\")",
+        url
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime =
+        loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
+    apply_runtime_policy(&mut runtime, Some(policy_path.as_path()), None)
+        .expect("apply policy should succeed");
+
+    runtime
+        .execute(&program)
+        .await
+        .expect("http should succeed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn restricted_mode_blocks_http_even_with_network_hosts_wildcard() {
+    let script_dir = tempdir().expect("script dir");
+    let url = "mock://allowed.local/post?echo_body=1".to_string();
+
+    let policy_path = script_dir.path().join(".loomrc.json");
+    std::fs::write(
+        &policy_path,
+        r#"{
+            "version":1,
+            "trust_mode":"restricted",
+            "allow_all":true,
+            "network_hosts":["*"]
+        }"#,
+    )
+    .expect("write policy");
+
+    let source = format!(
+        "@import \"std.http\" as http\n42 >> @http.post(\\\"{}\")",
+        url
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime =
+        loom::runtime::Runtime::new().with_script_dir(script_dir.path().to_str().expect("path"));
+    apply_runtime_policy(&mut runtime, Some(policy_path.as_path()), None)
+        .expect("apply policy should succeed");
+
+    let err = runtime
+        .execute(&program)
+        .await
+        .expect_err("restricted mode should block network");
+    assert!(err.contains("network operation is disabled in restricted mode"));
 }

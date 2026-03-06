@@ -87,6 +87,33 @@ fn pair_span(pair: &Pair<Rule>) -> Span {
     }
 }
 
+fn unescape_string_contents(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+
+    out
+}
+
 fn next_non_comment_or_error<'a>(
     iter: &mut impl Iterator<Item = Pair<'a, Rule>>,
     comments: &mut Vec<String>,
@@ -199,7 +226,10 @@ fn build_flow_or_branch(pair: Pair<Rule>) -> Result<FlowOrBranch, ParseError> {
     )?;
     match inner.as_rule() {
         Rule::Branch => Ok(FlowOrBranch::Branch(build_branch(inner)?)),
-        Rule::PipeFlow => Ok(FlowOrBranch::Flow(build_pipe_flow(inner, Vec::new())?)),
+        Rule::PipeFlow => Ok(FlowOrBranch::Flow(Box::new(build_pipe_flow(
+            inner,
+            Vec::new(),
+        )?))),
         _ => Err(make_error(&inner, "Expected flow or branch")),
     }
 }
@@ -384,14 +414,12 @@ fn build_function_call(pair: Pair<Rule>) -> Result<FunctionCall, ParseError> {
     .as_str()
     .to_string();
     let mut arguments = Vec::new();
+    let mut named_arguments = Vec::new();
     let mut alias = None;
     while let Some(next) = next_non_comment(&mut inner, &mut Vec::new()) {
         match next.as_rule() {
-            Rule::Arguments => {
-                let mut arg_inner = next.into_inner();
-                while let Some(arg) = next_non_comment(&mut arg_inner, &mut Vec::new()) {
-                    arguments.push(build_expression(arg)?);
-                }
+            Rule::CallArguments => {
+                append_call_arguments(next, &mut arguments, &mut named_arguments)?;
             }
             Rule::Identifier => {
                 alias = Some(next.as_str().to_string());
@@ -402,6 +430,7 @@ fn build_function_call(pair: Pair<Rule>) -> Result<FunctionCall, ParseError> {
     Ok(FunctionCall {
         name,
         arguments,
+        named_arguments,
         alias,
         span,
     })
@@ -416,15 +445,13 @@ fn build_directive_flow(pair: Pair<Rule>) -> Result<DirectiveFlow, ParseError> {
             .as_str()
             .to_string();
     let mut arguments = Vec::new();
+    let mut named_arguments = Vec::new();
     let mut alias = None;
 
     while let Some(next) = next_non_comment(&mut inner, &mut Vec::new()) {
         match next.as_rule() {
-            Rule::Arguments => {
-                let mut arg_inner = next.into_inner();
-                while let Some(arg) = next_non_comment(&mut arg_inner, &mut Vec::new()) {
-                    arguments.push(build_expression(arg)?);
-                }
+            Rule::CallArguments => {
+                append_call_arguments(next, &mut arguments, &mut named_arguments)?;
             }
             Rule::Identifier => {
                 alias = Some(next.as_str().to_string());
@@ -435,9 +462,90 @@ fn build_directive_flow(pair: Pair<Rule>) -> Result<DirectiveFlow, ParseError> {
     Ok(DirectiveFlow {
         name,
         arguments,
+        named_arguments,
         alias,
         span,
     })
+}
+
+fn build_secret_expression(pair: Pair<Rule>) -> Result<Expression, ParseError> {
+    let span = pair_span(&pair);
+    let pair_for_err = pair.clone();
+    let mut inner = pair.into_inner();
+    let mut arguments = Vec::new();
+    let mut named_arguments = Vec::new();
+
+    while let Some(next) = next_non_comment(&mut inner, &mut Vec::new()) {
+        if next.as_rule() != Rule::CallArguments {
+            continue;
+        }
+        append_call_arguments(next, &mut arguments, &mut named_arguments)?;
+    }
+
+    if !named_arguments.is_empty() {
+        return Err(make_error(
+            &pair_for_err,
+            "@secret does not support named arguments",
+        ));
+    }
+    if arguments.len() != 1 {
+        return Err(make_error(
+            &pair_for_err,
+            "@secret expects exactly one argument",
+        ));
+    }
+
+    Ok(Expression::SecretCall(SecretCall {
+        arguments,
+        named_arguments,
+        span,
+    }))
+}
+
+fn append_call_arguments(
+    call_arguments: Pair<Rule>,
+    positional: &mut Vec<Expression>,
+    named: &mut Vec<NamedArgument>,
+) -> Result<(), ParseError> {
+    let mut arg_inner = call_arguments.into_inner();
+    while let Some(arg) = next_non_comment(&mut arg_inner, &mut Vec::new()) {
+        let arg = if arg.as_rule() == Rule::CallArgument {
+            let arg_for_err = arg.clone();
+            next_non_comment_or_error(
+                &mut arg.into_inner(),
+                &mut Vec::new(),
+                &arg_for_err,
+                "call argument",
+            )?
+        } else {
+            arg
+        };
+        match arg.as_rule() {
+            Rule::NamedArgument => named.push(parse_named_argument(arg)?),
+            _ => positional.push(build_expression(arg)?),
+        }
+    }
+    Ok(())
+}
+
+fn parse_named_argument(named_arg: Pair<Rule>) -> Result<NamedArgument, ParseError> {
+    let named_pair_for_err = named_arg.clone();
+    let mut named_inner = named_arg.into_inner();
+    let name = next_non_comment_or_error(
+        &mut named_inner,
+        &mut Vec::new(),
+        &named_pair_for_err,
+        "named argument name",
+    )?
+    .as_str()
+    .to_string();
+    let value = build_expression(next_non_comment_or_error(
+        &mut named_inner,
+        &mut Vec::new(),
+        &named_pair_for_err,
+        "named argument value",
+    )?)?;
+    Ok(NamedArgument { name, value })
 }
 
 fn build_expression(pair: Pair<Rule>) -> Result<Expression, ParseError> {
@@ -475,8 +583,10 @@ fn build_expression(pair: Pair<Rule>) -> Result<Expression, ParseError> {
         }
         Rule::BinExpr => build_expression_part(inner),
         Rule::UnaryExpr => build_expression_part(inner),
+        Rule::SecretExpr => build_expression_part(inner),
         Rule::FunctionCall => build_expression_part(inner),
         Rule::MemberAccess => build_expression_part(inner),
+        Rule::ObjectLiteral => build_expression_part(inner),
         Rule::Literal => build_expression_part(inner),
         Rule::Identifier => build_expression_part(inner),
         _ => Err(make_error(&inner, "Expected expression")),
@@ -522,6 +632,7 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
             let expr = Box::new(build_expression_part(inner)?);
             Ok(Expression::UnaryOp("!".to_string(), expr))
         }
+        Rule::SecretExpr => build_secret_expression(pair),
         Rule::FunctionCall => Ok(Expression::FunctionCall(build_function_call(pair)?)),
         Rule::MemberAccess => {
             let parts = pair
@@ -530,6 +641,62 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
                 .map(|p| p.as_str().to_string())
                 .collect::<Vec<_>>();
             Ok(Expression::MemberAccess(parts))
+        }
+        Rule::ObjectLiteral => {
+            let mut entries = Vec::new();
+            for entry in pair.into_inner() {
+                if entry.as_rule() != Rule::ObjectEntry {
+                    continue;
+                }
+                let entry_for_err = entry.clone();
+                let mut inner = entry.into_inner();
+                let key_pair = next_non_comment_or_error(
+                    &mut inner,
+                    &mut Vec::new(),
+                    &entry_for_err,
+                    "object key",
+                )?;
+                let key_pair = if key_pair.as_rule() == Rule::ObjectKey {
+                    let key_for_err = key_pair.clone();
+                    next_non_comment_or_error(
+                        &mut key_pair.into_inner(),
+                        &mut Vec::new(),
+                        &key_for_err,
+                        "object key value",
+                    )?
+                } else {
+                    key_pair
+                };
+                let key = match key_pair.as_rule() {
+                    Rule::Identifier => ObjectKey::Identifier(key_pair.as_str().to_string()),
+                    Rule::StringLiteral | Rule::PathLiteral => {
+                        let key_for_err = key_pair.clone();
+                        let mut key_inner = key_pair.into_inner();
+                        let raw = next_non_comment_or_error(
+                            &mut key_inner,
+                            &mut Vec::new(),
+                            &key_for_err,
+                            "object string key body",
+                        )?
+                        .as_str()
+                        .to_string();
+                        if key_for_err.as_rule() == Rule::StringLiteral {
+                            ObjectKey::String(unescape_string_contents(&raw))
+                        } else {
+                            ObjectKey::Path(raw)
+                        }
+                    }
+                    _ => return Err(make_error(&key_pair, "Invalid object key")),
+                };
+                let value = build_expression(next_non_comment_or_error(
+                    &mut inner,
+                    &mut Vec::new(),
+                    &entry_for_err,
+                    "object value",
+                )?)?;
+                entries.push((key, value));
+            }
+            Ok(Expression::ObjectLiteral(entries))
         }
         Rule::Literal => {
             let pair_for_err = pair.clone();
@@ -551,7 +718,9 @@ fn build_expression_part(pair: Pair<Rule>) -> Result<Expression, ParseError> {
                     )?
                     .as_str()
                     .to_string();
-                    Ok(Expression::Literal(Literal::String(s)))
+                    Ok(Expression::Literal(Literal::String(
+                        unescape_string_contents(&s),
+                    )))
                 }
                 Rule::PathLiteral => {
                     let inner_for_err = inner.clone();
@@ -632,5 +801,6 @@ fn rotate_if_needed(left: Expression, op: String, right: Expression) -> Expressi
     }
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/parser_tests.rs"));
+#[cfg(test)]
+#[path = "../tests/unit/parser_tests.rs"]
+mod parser_tests;

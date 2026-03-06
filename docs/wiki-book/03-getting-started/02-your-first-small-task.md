@@ -9,7 +9,7 @@ Pick a single input and a single output with one transform.
 Example:
 
 ```loom
-@read("./inbox/customers.csv") >> @csv.parse >> filter(row >> row.email != "") >> "./out/customers-with-email.csv"
+@read(\"./inbox/customers.csv") >> @csv.parse >> filter(row >> row.email != \"") >> "./out/customers-with-email.csv"
 ```
 
 Why this works well:

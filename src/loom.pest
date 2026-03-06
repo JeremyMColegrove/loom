@@ -18,34 +18,41 @@ Source = { DirectiveFlow | FunctionCall | NonLambdaExpression }
 Destination = { Branch | DirectiveFlow | FunctionCall | NonLambdaExpression }
 
 CallableName = @{ Identifier ~ ("." ~ Identifier)* }
-FunctionCall = { CallableName ~ "(" ~ Arguments? ~ ")" ~ ("as" ~ Identifier)? }
+FunctionCall = { CallableName ~ "(" ~ CallArguments? ~ ")" ~ ("as" ~ Identifier)? }
 
 DirectiveName = @{ Identifier ~ ("." ~ Identifier)* }
 
-DirectiveFlow = { "@" ~ DirectiveName ~ ("(" ~ Arguments? ~ ")")? ~ ("as" ~ Identifier)? }
+DirectiveFlow = { "@" ~ DirectiveName ~ ("(" ~ CallArguments? ~ ")")? ~ ("as" ~ Identifier)? }
 
 Branch = { "[" ~ (PipeFlow ~ ("," ~ PipeFlow)*)? ~ "]" }
 
 FlowOrBranch = { Branch | PipeFlow }
 
 Arguments = { Expression ~ ("," ~ Expression)* }
+CallArguments = { CallArgument ~ ("," ~ CallArgument)* }
+CallArgument = { NamedArgument | Expression }
+NamedArgument = { Identifier ~ ":" ~ Expression }
 
-Expression = { Lambda | BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier }
-NonLambdaExpression = { BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier }
-
-Lambda = { Identifier ~ ">>" ~ (BinExpr | UnaryExpr | FunctionCall | MemberAccess | Literal | Identifier) }
-BinExpr = { (FunctionCall | MemberAccess | Literal | Identifier) ~ Operator ~ Expression }
-UnaryExpr = { "!" ~ (FunctionCall | MemberAccess | Identifier) }
+Expression = { Lambda | BinExpr | UnaryExpr | SecretExpr | FunctionCall | MemberAccess | ObjectLiteral | Literal | Identifier }
+NonLambdaExpression = { BinExpr | UnaryExpr | SecretExpr | FunctionCall | MemberAccess | ObjectLiteral | Literal | Identifier }
+Lambda = { Identifier ~ ">>" ~ (BinExpr | UnaryExpr | SecretExpr | FunctionCall | MemberAccess | ObjectLiteral | Literal | Identifier) }
+BinExpr = { (SecretExpr | FunctionCall | MemberAccess | ObjectLiteral | Literal | Identifier) ~ Operator ~ Expression }
+UnaryExpr = { "!" ~ (SecretExpr | FunctionCall | MemberAccess | Identifier) }
+SecretExpr = { "@secret" ~ "(" ~ CallArguments? ~ ")" }
 MemberAccess = { Identifier ~ ("." ~ Identifier)+ }
 
 Operator = { "&&" | "||" | ">=" | "<=" | "==" | "!=" | ">" | "<" | "+" | "-" | "*" | "/" }
 
 Literal = { StringLiteral | PathLiteral | Number | Boolean }
+ObjectLiteral = { "{" ~ (ObjectEntry ~ ("," ~ ObjectEntry)*)? ~ "}" }
+ObjectEntry = { ObjectKey ~ ":" ~ Expression }
+ObjectKey = { StringLiteral | PathLiteral | Identifier }
 Number = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 Boolean = { "true" | "false" }
 
-StringLiteral = ${ "\\\"" ~ InnerStr ~ "\"" }
+StringLiteral = ${ "\\\"" ~ InnerEscapedStr ~ "\"" }
 PathLiteral = ${ "\"" ~ InnerStr ~ "\"" }
+InnerEscapedStr = @{ ( "\\\"" | "\\\\" | "\\n" | "\\r" | "\\t" | !("\"") ~ ANY )* }
 InnerStr = @{ (!"\"" ~ ANY)* }
 
 Identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }

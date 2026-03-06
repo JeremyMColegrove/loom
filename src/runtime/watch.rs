@@ -354,5 +354,6 @@ struct WatchOptions {
     debounce_ms: u64,
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/runtime_watch_tests.rs"));
+#[cfg(test)]
+#[path = "../../tests/unit/runtime_watch_tests.rs"]
+mod runtime_watch_tests;

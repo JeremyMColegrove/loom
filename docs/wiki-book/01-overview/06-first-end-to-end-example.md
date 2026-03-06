@@ -3,8 +3,8 @@
 This example shows a realistic pipeline using watch, parse, filter, branch, and recovery.
 
 ```loom
-@watch("./inbox/") as event >>
-filter(event.type == "created" && event.file.ext == "csv") >>
+@watch(\"./inbox/") as event >>
+filter(event.type == \"created" && event.file.ext == \"csv") >>
 @atomic >> [
     @read(event.file.path) >> @csv.parse as data >> [
         filter(row >> row.price > 1000) >> "./reports/premium.csv",
@@ -12,14 +12,14 @@ filter(event.type == "created" && event.file.ext == "csv") >>
     ],
     event.file -> "./archive/"
 ] on_fail as err >> [
-    "processing failed: " + err >> "./logs/error.log",
+    \"processing failed: " + err >> "./logs/error.log",
     event.file -> "./quarantine/"
 ]
 ```
 
 ## What happens step by step
 
-1. `@watch("./inbox/")` emits file events.
+1. `@watch(\"./inbox/")` emits file events.
 2. `filter(...)` keeps only new CSV files.
 3. `@atomic` starts a transaction-like boundary.
 4. File content is read and parsed as CSV.

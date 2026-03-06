@@ -22,6 +22,7 @@ pub enum AuditOperation {
     Move,
     Import,
     Watch,
+    Network,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,7 @@ pub struct SecurityPolicy {
     pub write_path_globs: Vec<String>,
     pub import_path_globs: Vec<String>,
     pub watch_path_globs: Vec<String>,
+    pub network_hosts: Vec<String>,
     pub deny_globs: Vec<String>,
     pub allow_all: bool,
     read_allow_set: Option<GlobSet>,
@@ -77,6 +79,7 @@ impl SecurityPolicy {
             write_path_globs: vec![],
             import_path_globs: vec![],
             watch_path_globs: vec![],
+            network_hosts: vec![],
             deny_globs: vec![],
             allow_all: true,
             read_allow_set: None,
@@ -97,6 +100,7 @@ impl SecurityPolicy {
             write_path_globs: vec![],
             import_path_globs: vec![],
             watch_path_globs: vec![],
+            network_hosts: vec![],
             deny_globs: vec![],
             allow_all: false,
             read_allow_set: None,
@@ -165,6 +169,11 @@ impl SecurityPolicy {
         Ok(self)
     }
 
+    pub fn with_network_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.network_hosts = hosts;
+        self
+    }
+
     pub fn try_finalize(mut self) -> RuntimeResult<Self> {
         self.rebuild_read_allow_set()?;
         self.rebuild_write_allow_set()?;
@@ -174,10 +183,7 @@ impl SecurityPolicy {
         Ok(self)
     }
 
-    fn rebuild_allow_set(
-        globs: &[String],
-        label: &str,
-    ) -> RuntimeResult<Option<GlobSet>> {
+    fn rebuild_allow_set(globs: &[String], label: &str) -> RuntimeResult<Option<GlobSet>> {
         if globs.is_empty() {
             return Ok(None);
         }
@@ -346,6 +352,68 @@ impl Runtime {
         self.authorize_existing_path(Capability::Import, AuditOperation::Import, raw_path)
     }
 
+    pub(crate) fn authorize_network_url(&mut self, raw_url: &str) -> RuntimeResult<()> {
+        if self.trust_mode == TrustMode::Restricted {
+            let err = RuntimeError::restricted_operation("network");
+            self.push_audit_event(
+                AuditOperation::Network,
+                AuditOutcome::Denied,
+                raw_url.to_string(),
+                None,
+                Some(err.to_string()),
+            );
+            return Err(err);
+        }
+
+        let parsed = reqwest::Url::parse(raw_url)
+            .map_err(|e| RuntimeError::message(format!("Invalid URL '{}': {}", raw_url, e)))?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| RuntimeError::message(format!("URL has no host: '{}'", raw_url)))?
+            .to_ascii_lowercase();
+        let host_with_port = match parsed.port_or_known_default() {
+            Some(port) => format!("{}:{}", host, port),
+            None => host.clone(),
+        };
+
+        let allowed = if self.security_policy.allow_all
+            && self.security_policy.network_hosts.is_empty()
+        {
+            true
+        } else if self.security_policy.network_hosts.is_empty() {
+            false
+        } else {
+            self.security_policy
+                .network_hosts
+                .iter()
+                .map(|h| h.trim().to_ascii_lowercase())
+                .any(|allowed_host| {
+                    allowed_host == "*" || allowed_host == host || allowed_host == host_with_port
+                })
+        };
+
+        if !allowed {
+            let err = RuntimeError::unauthorized_access("Network", host_with_port.clone());
+            self.push_audit_event(
+                AuditOperation::Network,
+                AuditOutcome::Denied,
+                raw_url.to_string(),
+                Some(host_with_port),
+                Some(err.to_string()),
+            );
+            return Err(err);
+        }
+
+        self.push_audit_event(
+            AuditOperation::Network,
+            AuditOutcome::Allowed,
+            raw_url.to_string(),
+            Some(host_with_port),
+            None,
+        );
+        Ok(())
+    }
+
     fn authorize_canonical(
         &mut self,
         capability: Capability,
@@ -381,7 +449,9 @@ impl Runtime {
 
         if !self.security_policy.allow_all {
             let allowlist = self.allowlist_for(capability)?;
-            let mut allowed = allowlist.iter().any(|root| canonical_path.starts_with(root));
+            let mut allowed = allowlist
+                .iter()
+                .any(|root| canonical_path.starts_with(root));
             if !allowed {
                 allowed = self.capability_glob_allows(capability, &canonical_path);
             }
@@ -542,5 +612,6 @@ fn normalize_for_glob(path: &Path) -> String {
     }
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/runtime_security_tests.rs"));
+#[cfg(test)]
+#[path = "../../tests/unit/runtime_security_tests.rs"]
+mod runtime_security_tests;

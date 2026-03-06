@@ -80,7 +80,12 @@ fn parse_cli_args_with_require_default(
 fn require_policy_from_env() -> bool {
     env::var("LOOM_REQUIRE_POLICY")
         .ok()
-        .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            !matches!(
+                v.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(true)
 }
 
@@ -119,7 +124,16 @@ fn init_logging() {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), String> {
+async fn main() {
+    if let Err(err) = run().await {
+        if !err.is_empty() {
+            eprintln!("{}", err);
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), String> {
     init_logging();
     let args: Vec<String> = env::args().collect();
 
@@ -171,10 +185,18 @@ async fn main() -> Result<(), String> {
                         program.statements.len()
                     );
 
-                    // Determine script directory for import resolution
-                    let script_dir = std::path::Path::new(&file_path)
+                    // Determine script directory for import and secret resolution.
+                    // Prefer a canonicalized script path so lookup is stable across cwd changes.
+                    let resolved_script_path = std::fs::canonicalize(&file_path)
+                        .unwrap_or_else(|_| std::path::PathBuf::from(&file_path));
+                    let script_dir = resolved_script_path
                         .parent()
                         .map(|p| p.to_string_lossy().to_string())
+                        .or_else(|| {
+                            std::env::current_dir()
+                                .ok()
+                                .map(|p| p.to_string_lossy().to_string())
+                        })
                         .unwrap_or_else(|| ".".to_string());
 
                     let mut runtime = loom::runtime::Runtime::new().with_script_dir(&script_dir);
@@ -199,8 +221,7 @@ async fn main() -> Result<(), String> {
                         result = &mut exec => {
                             if let Err(e) = result {
                                 error!("runtime error while executing '{}': {}", file_path, e);
-                                eprintln!("Runtime error: {}", e);
-                                return Err(e);
+                                return Err(String::new());
                             }
                         }
                         signal = tokio::signal::ctrl_c() => {
@@ -210,8 +231,7 @@ async fn main() -> Result<(), String> {
                                     let _ = shutdown_trigger.send(true);
                                     if let Err(e) = exec.await {
                                         error!("runtime error during shutdown: {}", e);
-                                        eprintln!("Runtime error: {}", e);
-                                        return Err(e);
+                                        return Err(String::new());
                                     }
                                 }
                                 Err(e) => {
@@ -244,5 +264,6 @@ async fn main() -> Result<(), String> {
     }
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/main_tests.rs"));
+#[cfg(test)]
+#[path = "../tests/unit/main_tests.rs"]
+mod main_tests;

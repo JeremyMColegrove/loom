@@ -21,6 +21,16 @@ impl Runtime {
                         RuntimeError::message(format!("Undefined variable: {}", name))
                     })
                 }
+                Expression::ObjectLiteral(entries) => {
+                    let mut map = std::collections::HashMap::new();
+                    for (key, value_expr) in entries {
+                        map.insert(
+                            key.as_map_key().to_string(),
+                            self.eval_expression(value_expr).await?,
+                        );
+                    }
+                    Ok(Value::Record(map))
+                }
                 Expression::MemberAccess(parts) => {
                     if parts.is_empty() {
                         return Err(RuntimeError::message("Invalid member access"));
@@ -81,6 +91,13 @@ impl Runtime {
                         args.push(self.eval_expression(arg).await?);
                     }
                     self.call_function(&call.name, args).await
+                }
+                Expression::SecretCall(call) => {
+                    let (args, named_args) = self
+                        .eval_call_arguments(&call.arguments, &call.named_arguments)
+                        .await?;
+                    let value = self.resolve_secret_from_call_args(&args, &named_args)?;
+                    Ok(Value::String(value))
                 }
                 Expression::Lambda(lambda) => Ok(Value::Lambda(lambda.clone())),
             }

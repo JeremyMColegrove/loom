@@ -10,7 +10,7 @@ Use dataflow primitives instead:
 ## 1) `if` equivalent: gate a flow
 
 ```loom
-@read("./inbox/orders.csv") >> @csv.parse >> filter(row >> row.amount > 1000) >> "./out/high-value.csv"
+@read(\"./inbox/orders.csv") >> @csv.parse >> filter(row >> row.amount > 1000) >> "./out/high-value.csv"
 ```
 
 Interpretation:
@@ -20,7 +20,7 @@ Interpretation:
 ## 2) `if / else` equivalent: split into two branches
 
 ```loom
-@read("./inbox/orders.csv") >> @csv.parse >> [
+@read(\"./inbox/orders.csv") >> @csv.parse >> [
   filter(row >> row.amount > 1000) >> "./out/high.csv",
   filter(row >> row.amount <= 1000) >> "./out/normal.csv"
 ]
@@ -33,7 +33,7 @@ Interpretation:
 ## 3) Guard the whole pipeline
 
 ```loom
-@watch("./inbox") as event >> filter(event.type == "created" && event.file.ext == "csv") >> @read(event.file.path)
+@watch(\"./inbox") as event >> filter(event.type == \"created" && event.file.ext == \"csv") >> @read(event.file.path)
 ```
 
 This is the normal replacement for:
@@ -42,9 +42,9 @@ This is the normal replacement for:
 ## 4) Use predicate helpers for readability
 
 ```loom
-is_target(event) => event.type == "created" && event.file.ext == "csv"
+is_target(event) => event.type == \"created" && event.file.ext == \"csv"
 
-@watch("./inbox") as event >> filter(is_target(event)) >> @read(event.file.path)
+@watch(\"./inbox") as event >> filter(is_target(event)) >> @read(event.file.path)
 ```
 
 This keeps flow topology clear while centralizing condition logic.
@@ -54,7 +54,7 @@ This keeps flow topology clear while centralizing condition logic.
 `on_fail` is only for runtime errors.
 
 ```loom
-@read("./inbox/orders.csv") >> @csv.parse on_fail as err >> err >> "./logs/error.log"
+@read(\"./inbox/orders.csv") >> @csv.parse on_fail as err >> err >> "./logs/error.log"
 ```
 
 Do not use it as a normal false-condition branch.

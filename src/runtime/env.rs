@@ -159,5 +159,6 @@ impl Environment {
     }
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/runtime_env_tests.rs"));
+#[cfg(test)]
+#[path = "../../tests/unit/runtime_env_tests.rs"]
+mod runtime_env_tests;

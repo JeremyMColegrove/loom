@@ -18,7 +18,7 @@
     "trust_mode": {
       "type": "string",
       "enum": ["trusted", "restricted"],
-      "description": "trusted enforces policy; restricted also disables write/move/import/watch operations."
+      "description": "trusted enforces policy; restricted also disables write/move/import/watch/network operations."
     },
     "read_paths": {
       "type": "array",
@@ -39,6 +39,11 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Allowed paths for @watch roots. Entries may be literal roots or glob patterns."
+    },
+    "network_hosts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed outbound HTTP hosts (host or host:port). Use '*' to allow all hosts."
     },
     "deny_globs": {
       "type": "array",

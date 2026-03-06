@@ -3,18 +3,99 @@ use crate::runtime::Runtime;
 use crate::runtime::env::Value;
 use crate::runtime::error::{RuntimeError, RuntimeResult};
 use log::{debug, warn};
+use std::collections::HashMap;
 use std::sync::Arc;
 
+type RuntimeFuture<'a, T> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<T>> + 'a>>;
+type EvaluatedCallArguments = (Vec<Value>, HashMap<String, Value>);
+
 impl Runtime {
+    fn materialize_argument_value(&mut self, value: Value) -> RuntimeResult<Value> {
+        match value {
+            Value::Path(path) => Ok(Value::String(self.read_text_path(&path)?)),
+            Value::List(items) => {
+                let mut materialized = Vec::with_capacity(items.len());
+                for item in items {
+                    materialized.push(self.materialize_argument_value(item)?);
+                }
+                Ok(Value::List(materialized))
+            }
+            Value::Record(map) => {
+                let mut materialized = HashMap::with_capacity(map.len());
+                for (key, item) in map {
+                    materialized.insert(key, self.materialize_argument_value(item)?);
+                }
+                Ok(Value::Record(materialized))
+            }
+            other => Ok(other),
+        }
+    }
+
+    fn apply_named_function_arguments(
+        &self,
+        name: &str,
+        mut positional: Vec<Value>,
+        named: HashMap<String, Value>,
+    ) -> RuntimeResult<Vec<Value>> {
+        if named.is_empty() {
+            return Ok(positional);
+        }
+        let Some(func_def) = self.resolve_function(name) else {
+            return Err(RuntimeError::message(format!(
+                "Named arguments are only supported for user-defined functions: {}",
+                name
+            )));
+        };
+
+        if positional.len() < func_def.parameters.len() {
+            positional.resize(func_def.parameters.len(), Value::Null);
+        }
+        for (arg_name, arg_value) in named {
+            let Some(index) = func_def.parameters.iter().position(|p| p == &arg_name) else {
+                return Err(RuntimeError::message(format!(
+                    "Unknown named argument '{}' for function {}",
+                    arg_name, name
+                )));
+            };
+            positional[index] = arg_value;
+        }
+        Ok(positional)
+    }
+
+    pub(crate) fn eval_call_arguments<'a>(
+        &'a mut self,
+        positional_exprs: &'a [Expression],
+        named_exprs: &'a [NamedArgument],
+    ) -> RuntimeFuture<'a, EvaluatedCallArguments> {
+        Box::pin(async move {
+            let mut positional = Vec::new();
+            for arg in positional_exprs {
+                let evaluated = self.eval_expression(arg).await?;
+                positional.push(self.materialize_argument_value(evaluated)?);
+            }
+
+            let mut named = HashMap::new();
+            for arg in named_exprs {
+                let evaluated = self.eval_expression(&arg.value).await?;
+                named.insert(
+                    arg.name.clone(),
+                    self.materialize_argument_value(evaluated)?,
+                );
+            }
+            Ok((positional, named))
+        })
+    }
+
     pub(crate) fn eval_function_call<'a>(
         &'a mut self,
         call: &'a FunctionCall,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
+    ) -> RuntimeFuture<'a, Value> {
         Box::pin(async move {
-            let mut args = Vec::new();
-            for arg in &call.arguments {
-                args.push(self.eval_expression(arg).await?);
-            }
+            let (args, named_args) = self
+                .eval_call_arguments(&call.arguments, &call.named_arguments)
+                .await?;
+            let args = self.apply_named_function_arguments(&call.name, args, named_args)?;
             self.call_function(&call.name, args).await
         })
     }
@@ -23,12 +104,13 @@ impl Runtime {
         &'a mut self,
         call: &'a FunctionCall,
         pipe_val: Value,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
+    ) -> RuntimeFuture<'a, Value> {
         Box::pin(async move {
-            let mut args: Vec<Value> = vec![pipe_val];
-            for arg in &call.arguments {
-                args.push(self.eval_expression(arg).await?);
-            }
+            let (mut args, named_args) = self
+                .eval_call_arguments(&call.arguments, &call.named_arguments)
+                .await?;
+            args.insert(0, pipe_val);
+            let args = self.apply_named_function_arguments(&call.name, args, named_args)?;
             let result = self.call_function(&call.name, args).await?;
             if let Some(alias) = &call.alias {
                 self.env.set(alias, result.clone());
@@ -63,7 +145,7 @@ impl Runtime {
         &'a mut self,
         name: &'a str,
         args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
+    ) -> RuntimeFuture<'a, Value> {
         Box::pin(async move {
             if name == "filter" {
                 return self.call_filter(args).await;
@@ -126,10 +208,7 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn call_filter<'a>(
-        &'a mut self,
-        args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
+    pub(crate) fn call_filter<'a>(&'a mut self, args: Vec<Value>) -> RuntimeFuture<'a, Value> {
         Box::pin(async move {
             if args.len() == 1 {
                 let condition = args.first().cloned().unwrap_or(Value::Null);
@@ -185,10 +264,7 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn call_map<'a>(
-        &'a mut self,
-        args: Vec<Value>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RuntimeResult<Value>> + 'a>> {
+    pub(crate) fn call_map<'a>(&'a mut self, args: Vec<Value>) -> RuntimeFuture<'a, Value> {
         Box::pin(async move {
             let list = args.first().cloned().unwrap_or(Value::Null);
             let list = match list {

@@ -85,6 +85,30 @@
     ],
     "description": "Import a standard library module."
   },
+  "Import std.http": {
+    "prefix": "importhttp",
+    "body": [
+      "@import \"std.http\" as http"
+    ],
+    "description": "Import the std.http module."
+  },
+  "HTTP POST (pipe body)": {
+    "prefix": "httppost",
+    "body": [
+      "${1:data} >> @http.post(\"${2:http://127.0.0.1:8123/api}\")"
+    ],
+    "description": "Send a POST request using piped input as request body."
+  },
+  "HTTP POST (named args)": {
+    "prefix": "httppostnamed",
+    "body": [
+      "${1:data} >> @http.post(",
+      "\turl: \"${2:http://127.0.0.1:8123/api}\",",
+      "\theaders: { \"${3:Authorization}\": \"${4:Bearer token}\" }",
+      ")"
+    ],
+    "description": "Send a POST request with named arguments and headers object."
+  },
   "Read and Parse CSV": {
     "prefix": "csvparse",
     "body": [

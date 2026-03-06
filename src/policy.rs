@@ -12,6 +12,7 @@ struct LoomPolicyFile {
     write_paths: Option<Vec<String>>,
     import_paths: Option<Vec<String>>,
     watch_paths: Option<Vec<String>>,
+    network_hosts: Option<Vec<String>>,
     deny_globs: Option<Vec<String>>,
 }
 
@@ -135,6 +136,7 @@ pub fn apply_runtime_policy(
             write_paths,
             import_paths,
             watch_paths,
+            network_hosts,
             deny_globs,
         } = raw;
 
@@ -194,6 +196,13 @@ pub fn apply_runtime_policy(
                 policy = policy.with_watch_paths(all_paths.clone());
             }
         }
+        if allow_all_enabled || network_hosts.is_some() {
+            if let Some(hosts) = network_hosts {
+                policy = policy.with_network_hosts(hosts);
+            } else {
+                policy = policy.with_network_hosts(vec!["*".to_string()]);
+            }
+        }
         if let Some(deny_globs) = deny_globs {
             policy = policy
                 .with_deny_globs(deny_globs)
@@ -214,5 +223,6 @@ pub fn apply_runtime_policy(
     Ok(())
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/policy_tests.rs"));
+#[cfg(test)]
+#[path = "../tests/unit/policy_tests.rs"]
+mod policy_tests;

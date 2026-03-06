@@ -26,13 +26,16 @@ impl Runtime {
             atomic_context: None,
             atomic_txn: None,
             callable_sinks: HashSet::new(),
+            std_modules: HashSet::new(),
             shutdown_tx,
             module_loader: Arc::new(RwLock::new(ModuleLoader::default())),
         }
     }
 
     pub fn with_script_dir(mut self, dir: &str) -> Self {
-        self.script_dir = Some(dir.to_string());
+        let normalized =
+            std::fs::canonicalize(dir).unwrap_or_else(|_| std::path::PathBuf::from(dir));
+        self.script_dir = Some(normalized.to_string_lossy().to_string());
         self
     }
 

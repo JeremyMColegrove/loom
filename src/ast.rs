@@ -97,7 +97,15 @@ pub enum Destination {
 pub struct FunctionCall {
     pub name: String,
     pub arguments: Vec<Expression>,
+    pub named_arguments: Vec<NamedArgument>,
     pub alias: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SecretCall {
+    pub arguments: Vec<Expression>,
+    pub named_arguments: Vec<NamedArgument>,
     pub span: Span,
 }
 
@@ -105,8 +113,15 @@ pub struct FunctionCall {
 pub struct DirectiveFlow {
     pub name: String,
     pub arguments: Vec<Expression>,
+    pub named_arguments: Vec<NamedArgument>,
     pub alias: Option<String>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedArgument {
+    pub name: String,
+    pub value: Expression,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -123,7 +138,7 @@ pub struct Branch {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum FlowOrBranch {
-    Flow(PipeFlow),
+    Flow(Box<PipeFlow>),
     Branch(Branch),
 }
 
@@ -145,13 +160,30 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ObjectKey {
+    Identifier(String),
+    Path(String),
+    String(String),
+}
+
+impl ObjectKey {
+    pub fn as_map_key(&self) -> &str {
+        match self {
+            ObjectKey::Identifier(s) | ObjectKey::Path(s) | ObjectKey::String(s) => s,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     Literal(Literal),
     Identifier(String),
+    ObjectLiteral(Vec<(ObjectKey, Expression)>),
     BinaryOp(Box<Expression>, String, Box<Expression>),
     UnaryOp(String, Box<Expression>),
     Lambda(Lambda),
     FunctionCall(FunctionCall),
+    SecretCall(SecretCall),
     MemberAccess(Vec<String>),
 }
 

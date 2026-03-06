@@ -40,7 +40,7 @@ This gives Loom only the folders needed for the starter workflow.
 Create `scripts/first.loom`:
 
 ```loom
-@read("./inbox/sample.csv") >> @csv.parse >> filter(row >> row.price > 1000) >> "./out/high-value.csv" on_fail as err >> "error: " + err >> "./logs/errors.log"
+@read(\"./inbox/sample.csv") >> @csv.parse >> filter(row >> row.price > 1000) >> "./out/high-value.csv" on_fail as err >> \"error: " + err >> "./logs/errors.log"
 ```
 
 ## Step 4: Run Loom

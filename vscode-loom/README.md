@@ -5,6 +5,7 @@ This extension provides:
 - syntax highlighting
 - LSP integration (`loom --lsp`)
 - `Loom: Run Current File` command
+- snippets for common patterns (including `std.http` POST)
 
 ## 1) Build the Loom binary
 
@@ -73,6 +74,17 @@ Binary resolution order:
 1. `loom.server.path` setting (absolute path)
 2. bundled binary for current `platform-arch`
 3. `loom` from system `PATH`
+
+With a current Loom binary, editor features include hover and autocomplete for:
+- `@import "std.http" as http`
+- `@http.post(...)`
+- `@secret(...)`
+- named arguments and object-literal headers in HTTP calls
+
+Important syntax note:
+- In Loom, plain quotes (`"..."`) are path literals.
+- In argument positions, plain quotes read a file and pass file contents.
+- Use escaped strings (`\"..."`) for literal text arguments like URLs, header values, and secret names.
 
 ## Commands
 

@@ -18,7 +18,7 @@ When logic repeats, extract helpers:
 
 ```loom
 @import "scripts/logic" as util
-@read("./inbox/orders.csv") >> @csv.parse >> filter(row >> util.is_valid(row)) >> "./out/clean-orders.csv"
+@read(\"./inbox/orders.csv") >> @csv.parse >> filter(row >> util.is_valid(row)) >> "./out/clean-orders.csv"
 ```
 
 This keeps main flows short and easier to review.

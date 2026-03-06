@@ -40,7 +40,7 @@ For long-running watcher flows, shutdown signals stop active watchers cleanly.
 ## Example lifecycle in one script
 
 ```loom
-@watch("./inbox/") as event >> filter(event.type == "created") >> @read(event.file.path)
+@watch(\"./inbox/") as event >> filter(event.type == \"created") >> @read(event.file.path)
 ```
 
 This parses, validates, initializes policy/trust context, then runs as a watcher-driven flow.

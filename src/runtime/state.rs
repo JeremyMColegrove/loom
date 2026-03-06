@@ -26,6 +26,7 @@ pub struct Runtime {
     pub(crate) atomic_context: Option<AtomicContext>,
     pub(crate) atomic_txn: Option<AtomicTransaction>,
     pub(crate) callable_sinks: HashSet<String>,
+    pub(crate) std_modules: HashSet<String>,
     pub(crate) shutdown_tx: tokio::sync::watch::Sender<bool>,
     pub(crate) module_loader: Arc<RwLock<ModuleLoader>>,
 }

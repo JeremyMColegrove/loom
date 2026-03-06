@@ -15,6 +15,7 @@ Example:
   "write_paths": ["./out", "./logs", "./archive", "./quarantine"],
   "import_paths": ["./lib"],
   "watch_paths": ["./inbox"],
+  "network_hosts": ["127.0.0.1:8123", "api.example.com"],
   "deny_globs": ["**/secret.txt", "**/*.pem"]
 }
 ```
@@ -27,6 +28,7 @@ Example:
   - `true`: capabilities default to full filesystem scope unless that capability has an explicit path list.
 - `trust_mode`: `trusted` or `restricted` (also overridable by CLI flag).
 - `read_paths`, `write_paths`, `import_paths`, `watch_paths`: allowlists for each capability; each entry can be a literal root or a glob pattern (for example `./inbox_*`).
+- `network_hosts`: allowlist for outbound HTTP hosts (host or `host:port`); use `"*"` to allow all hosts.
 - `deny_globs`: explicit deny rules that override allowlists.
 
 ## Resolution rules that matter in practice
@@ -41,7 +43,7 @@ Example:
 Trust mode and path policy are independent controls:
 
 - `trusted` mode: full runtime features, still bounded by paths and deny globs.
-- `restricted` mode: blocks write, move, import, and watch operations regardless of path allowlists.
+- `restricted` mode: blocks write, move, import, watch, and network operations regardless of allowlists.
 
 Use path policy for *where* operations can happen, and trust mode for *which operation types* are allowed.
 

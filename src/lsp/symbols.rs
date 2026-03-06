@@ -31,10 +31,25 @@ fn find_expression_symbol_at_pos<'a>(
                 None
             }
         }
+        Expression::SecretCall(call) => {
+            if call.span.contains_zero_based(pos.line, pos.character) {
+                Some(SymbolAtPos { name: "secret" })
+            } else {
+                None
+            }
+        }
         Expression::Lambda(lambda) => find_expression_symbol_at_pos(&lambda.body, pos),
         Expression::BinaryOp(left, _, right) => find_expression_symbol_at_pos(left, pos)
             .or_else(|| find_expression_symbol_at_pos(right, pos)),
         Expression::UnaryOp(_, inner) => find_expression_symbol_at_pos(inner, pos),
+        Expression::ObjectLiteral(entries) => {
+            for (_, value) in entries {
+                if let Some(found) = find_expression_symbol_at_pos(value, pos) {
+                    return Some(found);
+                }
+            }
+            None
+        }
         _ => None,
     }
 }

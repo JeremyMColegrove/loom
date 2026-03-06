@@ -17,7 +17,12 @@ Loom is perfect for automation, stream handling, and background processing tasks
 Loom is built around a few core ideas that keep pipelines robust.
 
 **File-First Philosophy**
-Loom treats the filesystem as a first-class citizen. You can read a file simply by streaming its path: `"input.txt" >>`. To append data to a file at the end of a pipeline, just stream the output into it: `>> "output.txt"`. There is no need for deep boilerplate or manually opening file handles.
+Loom treats the filesystem as a first-class citizen. You can read a file by streaming its path into `@read`: `"input.txt" >> @read`. To append data to a file at the end of a pipeline, stream output into a path destination: `>> "output.txt"`. There is no need for deep boilerplate or manually opening file handles.
+
+Important syntax difference from most languages:
+- In Loom, plain quotes (`"..."`) are path literals.
+- In argument positions, plain quotes trigger a file read and pass file contents.
+- If you want literal text, use escaped strings (`\"..."`).
 
 **Pipes (`>>`)**
 The pipe operator is the foundation of Loom. It takes the output of the left side and feeds it into the right side for processing.

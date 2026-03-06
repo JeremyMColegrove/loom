@@ -1,62 +1,13 @@
-/// Built-in directive documentation for hover and completion.
-pub(crate) struct DirectiveInfo {
-    pub(crate) name: &'static str,
-    pub(crate) signature: &'static str,
-    pub(crate) description: &'static str,
-}
+use crate::builtin_spec::{
+    BUILTIN_DIRECTIVES, BUILTIN_FUNCTIONS, BuiltinDirectiveSpec, BuiltinFunctionSpec,
+};
 
-pub(crate) const DIRECTIVES: &[DirectiveInfo] = &[
-    DirectiveInfo {
-        name: "watch",
-        signature: "@watch(path, recursive?, debounce_ms?)",
-        description: "Watches a file or directory using filesystem events. Optional args enable recursive mode and debounce in milliseconds. Returns an event record with `file`, `path`, and `type` fields.",
-    },
-    DirectiveInfo {
-        name: "atomic",
-        signature: "@atomic",
-        description: "Wraps subsequent operations in a transaction. If any step fails, all changes are rolled back.",
-    },
-    DirectiveInfo {
-        name: "lines",
-        signature: "@lines(path?)",
-        description: "Reads a file line-by-line into a list of strings. Uses piped input when no argument is provided.",
-    },
-    DirectiveInfo {
-        name: "csv.parse",
-        signature: "@csv.parse(data)",
-        description: "Parses CSV data into records. Returns a record with `source`, `valid`, and `rows` fields.",
-    },
-    DirectiveInfo {
-        name: "log",
-        signature: "@log",
-        description: "Logs the current pipe value to stdout. Passes the value through unchanged.",
-    },
-    DirectiveInfo {
-        name: "read",
-        signature: "@read(path)",
-        description: "Reads the contents of a file and returns it as a string.",
-    },
-    DirectiveInfo {
-        name: "write",
-        signature: "@write(path)",
-        description: "Writes the current pipe value to a file at the given path.",
-    },
-    DirectiveInfo {
-        name: "filter",
-        signature: "@filter(predicate)",
-        description: "Directive form of `filter(...)` for piped list values.",
-    },
-    DirectiveInfo {
-        name: "map",
-        signature: "@map(transform)",
-        description: "Directive form of `map(...)` for piped list values.",
-    },
-    DirectiveInfo {
-        name: "import",
-        signature: "@import \"path\" [as alias]",
-        description: "Imports functions and definitions from another Loom file.",
-    },
-];
+pub(crate) type DirectiveInfo = BuiltinDirectiveSpec;
+pub(crate) type BuiltinFunctionInfo = BuiltinFunctionSpec;
+
+/// Built-in directive documentation for hover and completion.
+pub(crate) const DIRECTIVES: &[DirectiveInfo] = BUILTIN_DIRECTIVES;
+pub(crate) const BUILTIN_FUNCTION_DOCS: &[BuiltinFunctionInfo] = BUILTIN_FUNCTIONS;
 
 pub(crate) const KEYWORDS: &[(&str, &str)] = &[
     (
@@ -69,30 +20,6 @@ pub(crate) const KEYWORDS: &[(&str, &str)] = &[
     ),
     ("true", "Boolean literal true."),
     ("false", "Boolean literal false."),
-];
-
-pub(crate) const BUILTIN_FUNCTIONS: &[(&str, &str, &str)] = &[
-    (
-        "filter",
-        "filter(predicate)",
-        "Filters items using a lambda predicate. E.g. `filter(r >> r.valid)`",
-    ),
-    (
-        "map",
-        "map(transform)",
-        "Transforms each item using a lambda. E.g. `map(r >> r.name)`",
-    ),
-    ("print", "print(value)", "Prints a value to stdout."),
-    (
-        "concat",
-        "concat(a, b, ...)",
-        "Concatenates values into a single string.",
-    ),
-    (
-        "exists",
-        "exists(path)",
-        "Returns true if the file at path exists.",
-    ),
 ];
 
 pub(crate) const MEMBER_FIELDS: &[(&str, &str)] = &[

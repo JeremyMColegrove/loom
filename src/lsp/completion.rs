@@ -1,4 +1,4 @@
-use crate::lsp::catalog::{BUILTIN_FUNCTIONS, DIRECTIVES, KEYWORDS, MEMBER_FIELDS};
+use crate::lsp::catalog::{BUILTIN_FUNCTION_DOCS, DIRECTIVES, KEYWORDS, MEMBER_FIELDS};
 use crate::lsp::text::{byte_idx_to_utf16_col, utf16_col_to_byte_idx, utf16_col_to_char_idx};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -163,7 +163,7 @@ pub(crate) fn get_signature_context(
             break;
         }
         current_line -= 1;
-        current_idx = lines[current_line].len();
+        current_idx = lines[current_line].chars().count();
     }
 
     None
@@ -264,6 +264,7 @@ fn collect_std_import_candidates(base_dir: &Path, prefix: &str) -> Vec<String> {
     let mut modules = BTreeSet::new();
     modules.insert("std.csv".to_string());
     modules.insert("std.out".to_string());
+    modules.insert("std.http".to_string());
 
     for ancestor in base_dir.ancestors() {
         let std_dir = ancestor.join("std");
@@ -287,29 +288,58 @@ pub(crate) fn extract_string_literal_prefix(
 ) -> Option<(String, u32)> {
     let lines: Vec<&str> = text.lines().collect();
     let line_text = lines.get(line as usize)?;
-    let col = utf16_col_to_byte_idx(line_text, character);
-    let before_cursor = &line_text[..col];
+    let cursor_byte = utf16_col_to_byte_idx(line_text, character);
 
-    let mut quote_indices = Vec::new();
-    let mut in_escape = false;
-    for (i, c) in before_cursor.char_indices() {
-        if in_escape {
-            in_escape = false;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut quote_start_byte = 0usize;
+    let mut is_path_literal = false;
+
+    let is_escaped_quote = |s: &str, quote_byte_idx: usize| -> bool {
+        let bytes = s.as_bytes();
+        let mut i = quote_byte_idx;
+        let mut slash_count = 0usize;
+        while i > 0 {
+            i -= 1;
+            if bytes[i] == b'\\' {
+                slash_count += 1;
+            } else {
+                break;
+            }
+        }
+        slash_count % 2 == 1
+    };
+
+    for (byte_idx, ch) in line_text.char_indices() {
+        if byte_idx >= cursor_byte {
+            break;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
             continue;
         }
-        if c == '\\' {
-            in_escape = true;
-        } else if c == '"' {
-            quote_indices.push(i);
+
+        if ch == '"' {
+            in_string = true;
+            quote_start_byte = byte_idx;
+            is_path_literal = !is_escaped_quote(line_text, byte_idx);
         }
     }
 
-    if quote_indices.len() % 2 == 1 {
-        let last_quote = *quote_indices.last()?;
-        let content_start = (last_quote + 1) as u32;
+    if in_string && is_path_literal {
+        let content_start_byte = quote_start_byte + 1;
         Some((
-            before_cursor[last_quote + 1..].to_string(),
-            byte_idx_to_utf16_col(line_text, content_start as usize),
+            line_text[content_start_byte..cursor_byte].to_string(),
+            byte_idx_to_utf16_col(line_text, content_start_byte),
         ))
     } else {
         None
@@ -512,14 +542,14 @@ pub(crate) fn completion_items_for_trigger(trigger: Option<&str>) -> Vec<Complet
                     ..Default::default()
                 });
             }
-            for (name, sig, desc) in BUILTIN_FUNCTIONS {
+            for func in BUILTIN_FUNCTION_DOCS {
                 items.push(CompletionItem {
-                    label: name.to_string(),
+                    label: func.name.to_string(),
                     kind: Some(CompletionItemKind::FUNCTION),
-                    detail: Some(sig.to_string()),
+                    detail: Some(func.signature.to_string()),
                     documentation: Some(Documentation::MarkupContent(MarkupContent {
                         kind: MarkupKind::Markdown,
-                        value: desc.to_string(),
+                        value: func.description.to_string(),
                     })),
                     ..Default::default()
                 });
@@ -530,5 +560,6 @@ pub(crate) fn completion_items_for_trigger(trigger: Option<&str>) -> Vec<Complet
     items
 }
 
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/lsp_completion_tests.rs"));
+#[cfg(test)]
+#[path = "../../tests/unit/lsp_completion_tests.rs"]
+mod lsp_completion_tests;

@@ -5,9 +5,11 @@ pub mod error;
 mod eval;
 pub mod fs;
 mod functions;
+mod http;
 mod imports;
 mod limits;
 mod pipeline;
+mod secrets;
 pub mod security;
 mod watch;
 

@@ -16,7 +16,7 @@ Syntax forms:
 
 is_valid(row) => row.id != null && row.price > 0
 
-@read("./inbox/orders.csv") >> @csv.parse >> filter(row >> is_valid(row)) >> "./out/clean.csv"
+@read(\"./inbox/orders.csv") >> @csv.parse >> filter(row >> is_valid(row)) >> "./out/clean.csv"
 ```
 
 ## 2) Statements
@@ -81,25 +81,40 @@ Pipe operators:
 Examples:
 
 ```loom
-"line" >> "./logs/app.log"
-"latest" >>> "./out/state.json"
+\"line" >> "./logs/app.log"
+\"latest" >>> "./out/state.json"
 "./inbox/new.csv" -> "./archive/new.csv"
 ```
 
-## 4.1) Implicit path I/O vs string literals
+## 4.1) Critical difference from most languages: quotes mean files by default
 
-Loom treats plain quoted literals (`"..."`) as path literals.
+Loom treats plain quoted literals (`"..."`) as path literals, not normal string literals.
 
-That gives implicit filesystem behavior in path-aware pipelines:
-- Source path literal is treated as a file path input value (consumed by path-aware directives/sinks such as `@read`, `@csv.parse`, or file destinations).
+That means:
+- In argument/parameter positions, `"..."` is treated as a file path to read immediately, and the file contents are passed as the argument value.
+- In destination positions, `"..."` is treated as a file output target.
+- If you want literal text, you must use escaped string literals (`\"..."`) or template literals.
+
+Examples:
+
+```loom
+@secret("API_KEY_FILE")           // reads file API_KEY_FILE; file contents become key name
+@secret(\"API_KEY\")              // literal key text API_KEY
+@http.post(url: \"https://api\")  // literal URL text
+```
+
+This is intentionally different from Python/JavaScript/etc, where `"..."` is usually a normal string.
+
+Path-aware pipeline behavior:
+- Source path literal is treated as a file path input value (consumed by directives/sinks such as `@read`, `@csv.parse`, or file destinations).
 - Destination path literal acts as file output target.
 
 Examples:
 
 ```loom
-"./inbox/orders.csv" >> stdout            // read this file path into downstream step
-"processed" >> "./logs/activity.log"      // append text to file
-"state" >>> "./out/state.txt"             // overwrite file
+"./inbox/orders.csv" >> @read >> stdout   // read a file via path literal source
+\"processed" >> "./logs/activity.log"     // append literal text to file
+\"state" >>> "./out/state.txt"            // overwrite file with literal text
 ```
 
 Use escaped string literals (`\"..."`) for text data, not paths:
@@ -155,7 +170,8 @@ Expression forms:
 - identifiers: `event`, `row`, `util`
 - literals: string/path/template/number/boolean
 - member access: `event.file.path`
-- function calls: `exists("./x")`, `util.is_valid(row)`
+- function calls: `exists(\"./x")`, `util.is_valid(row)`
+- secret expressions: `@secret(\"NAME\")`
 - unary not: `!event.active`
 - binary operators: `+ - * / > >= < <= == != && ||`
 - lambda: `row >> row.price > 1000`
@@ -187,6 +203,12 @@ Escaped-string form:
 ```
 
 Use this when you want string data and do not want path semantics.
+
+You can compose strings with `@secret(...)` anywhere expressions are allowed:
+
+```loom
+\"hello: " + @secret(\"NAME")
+```
 
 ### Template string
 
@@ -228,7 +250,7 @@ map(row >> row.email)
 
 ```loom
 @csv.parse as data
-@watch("./inbox") as event
+@watch(\"./inbox") as event
 on_fail as err >> err >> "./logs/error.log"
 ```
 
@@ -238,8 +260,34 @@ Function call form:
 
 ```loom
 name(arg1, arg2)
-module.func(arg)
 ```
+
+## 12) Named arguments and object literals
+
+Calls support positional and named arguments:
+
+```loom
+@http.post(url: \"http://127.0.0.1:8123/api", headers: { "Authorization": \"Bearer token" })
+```
+
+Object literals use `{ key: value }` with identifier or string keys.
+
+## 13) HTTP standard library (`std.http`)
+
+Import and use:
+
+```loom
+@import "std.http" as http
+
+42 >> @http.post(\"http://127.0.0.1:8123/api") >> "response.txt"
+```
+
+Behavior:
+- `@http.post(url, headers?, data?)`
+- If `data` is omitted, piped input becomes request body.
+- Body encoding is string-based (`as_string()` semantics).
+- The response body string is piped to the next step.
+- Non-2xx status codes raise runtime errors (usable with `on_fail`).
 
 Built-in functions available in runtime include:
 - `filter(...)`
@@ -248,7 +296,7 @@ Built-in functions available in runtime include:
 - `concat(...)`
 - `exists(...)`
 
-## 12) Comments and whitespace
+## 14) Comments and whitespace
 
 Single-line comments:
 

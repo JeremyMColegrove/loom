@@ -132,9 +132,7 @@ impl Runtime {
                             self.write_or_move_path(op, path, &pipe_val)
                         }
                         Expression::Identifier(name) => {
-                            if self.callable_sinks.contains(name)
-                                && self.env.get_function(name).is_some()
-                            {
+                            if self.env.get_function(name).is_some() {
                                 return self.call_function(name, vec![pipe_val]).await;
                             }
                             // Store value in variable

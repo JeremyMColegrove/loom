@@ -1,682 +1,763 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
+use super::*;
 
-    #[test]
-    fn parses_path_literal_without_prefix() {
-        let program = parse("\"hello-world.txt\" >> output").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        let Source::Expression(Expression::Literal(Literal::Path(path))) = &flow.source else {
-            panic!("expected path literal source");
-        };
-        assert_eq!(path, "hello-world.txt");
-    }
+#[test]
+fn parses_path_literal_without_prefix() {
+    let program = parse("\"hello-world.txt\" >> output").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let Source::Expression(Expression::Literal(Literal::Path(path))) = &flow.source else {
+        panic!("expected path literal source");
+    };
+    assert_eq!(path, "hello-world.txt");
+}
 
-    #[test]
-    fn parses_string_literal_with_escaped_quote_prefix() {
-        let program = parse(r#"\"hello-world.txt" >> output"#).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        let Source::Expression(Expression::Literal(Literal::String(text))) = &flow.source else {
-            panic!("expected string literal source");
-        };
-        assert_eq!(text, "hello-world.txt");
-    }
+#[test]
+fn parses_string_literal_with_escaped_quote_prefix() {
+    let program = parse(r#"\"hello-world.txt" >> output"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let Source::Expression(Expression::Literal(Literal::String(text))) = &flow.source else {
+        panic!("expected string literal source");
+    };
+    assert_eq!(text, "hello-world.txt");
+}
 
-    #[test]
-    fn parses_qualified_function_call() {
-        let program = parse(r#"\"x" >> mt.resize(800)"#).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected function-call destination");
-        };
-        assert_eq!(call.name, "mt.resize");
-    }
+#[test]
+fn parses_string_literal_with_embedded_escaped_quotes() {
+    let program = parse(r#"\"{\"msg\":\"ok\"}" >> output"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let Source::Expression(Expression::Literal(Literal::String(text))) = &flow.source else {
+        panic!("expected string literal source");
+    };
+    assert_eq!(text, "{\"msg\":\"ok\"}");
+}
 
-    #[test]
-    fn parses_nested_member_access() {
-        let program = parse("event.file.path >> out").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
-            panic!("expected member-access source");
-        };
-        assert_eq!(
-            parts,
-            &vec!["event".to_string(), "file".to_string(), "path".to_string()]
-        );
-    }
+#[test]
+fn parses_qualified_function_call() {
+    let program = parse(r#"\"x" >> mt.resize(800)"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected function-call destination");
+    };
+    assert_eq!(call.name, "mt.resize");
+}
 
-    #[test]
-    fn parses_filter_lambda_with_comparison_operator() {
-        let program = parse(
-            "\"customers.csv\" >> csv.parse >> @filter(row >> row.Index > 90) >> \"high.txt\"",
-        )
-        .expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        assert_eq!(flow.operations.len(), 3);
-        let (_, Destination::Directive(filter)) = &flow.operations[1] else {
-            panic!("expected filter directive destination");
-        };
-        let Some(Expression::Lambda(lambda)) = filter.arguments.first() else {
-            panic!("expected lambda argument for filter");
-        };
-        let Expression::BinaryOp(_, op, _) = lambda.body.as_ref() else {
-            panic!("expected binary expression in filter lambda");
-        };
-        assert_eq!(op, ">");
-    }
+#[test]
+fn parses_nested_member_access() {
+    let program = parse("event.file.path >> out").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
+        panic!("expected member-access source");
+    };
+    assert_eq!(
+        parts,
+        &vec!["event".to_string(), "file".to_string(), "path".to_string()]
+    );
+}
 
-    #[test]
-    fn parses_filter_lambda_with_logical_and_operator() {
-        let program =
-            parse("\"customers.csv\" >> csv.parse >> @filter(row >> 1 && 2) >> \"high.txt\"")
-                .expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        let (_, Destination::Directive(filter)) = &flow.operations[1] else {
-            panic!("expected filter directive destination");
-        };
-        let Some(Expression::Lambda(lambda)) = filter.arguments.first() else {
-            panic!("expected lambda argument for filter");
-        };
-        let Expression::BinaryOp(_, op, _) = lambda.body.as_ref() else {
-            panic!("expected binary expression in filter lambda");
-        };
-        assert_eq!(op, "&&");
-    }
-
-    #[test]
-    fn parses_read_then_csv_parse_in_branch() {
-        let src = r#"x >> [
-            @read(event.file.path) >> @csv.parse as data >> [
-                stdout
-            ]
-        ]"#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe statement");
-        };
-        // x >> [branch]
-        assert_eq!(flow.operations.len(), 1);
-        let (_, Destination::Branch(branch)) = &flow.operations[0] else {
-            panic!("expected branch destination");
-        };
-        // Inside the branch: @read(event.file.path) >> @csv.parse as data >> [...]
-        let inner_item = &branch.items[0];
-        let BranchItem::Flow(inner_flow) = inner_item else {
-            panic!("expected flow in branch item");
-        };
-        let Source::Directive(read_dir) = &inner_flow.source else {
-            panic!(
-                "expected @read directive as source, got {:?}",
-                inner_flow.source
-            );
-        };
-        assert_eq!(read_dir.name, "read");
-        // Should have 2 operations: >> @csv.parse as data, >> [...]
-        assert_eq!(
-            inner_flow.operations.len(),
-            2,
-            "expected 2 operations, got: {:?}",
-            inner_flow.operations
-        );
-        let (_, Destination::Directive(csv_dir)) = &inner_flow.operations[0] else {
-            panic!(
-                "expected @csv.parse directive destination, got: {:?}",
-                inner_flow.operations[0]
-            );
-        };
-        assert_eq!(csv_dir.name, "csv.parse");
-        assert_eq!(csv_dir.alias, Some("data".to_string()));
-    }
-
-    // ── Operator Precedence ──────────────────────────────────────────────
-
-    #[test]
-    fn precedence_multiply_binds_tighter_than_add() {
-        // a + b * c should become BinOp(a, +, BinOp(b, *, c))
-        let program = parse("x >> filter(a + b * c)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(op, "+");
-        assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
-        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
-            panic!("expected inner binop");
-        };
-        assert_eq!(inner_op, "*");
-    }
-
-    #[test]
-    fn precedence_equality_binds_tighter_than_logical_and() {
-        // a == b && c == d → BinOp(BinOp(a,==,b), &&, BinOp(c,==,d))
-        let program = parse("x >> filter(a == b && c == d)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(op, "&&");
-        let Expression::BinaryOp(_, left_op, _) = left.as_ref() else {
-            panic!("expected left binop");
-        };
-        assert_eq!(left_op, "==");
-        let Expression::BinaryOp(_, right_op, _) = right.as_ref() else {
-            panic!("expected right binop");
-        };
-        assert_eq!(right_op, "==");
-    }
-
-    #[test]
-    fn precedence_and_binds_tighter_than_or() {
-        // a || b && c → BinOp(a, ||, BinOp(b, &&, c))
-        let program = parse("x >> filter(a || b && c)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(op, "||");
-        assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
-        let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
-            panic!("expected inner binop");
-        };
-        assert_eq!(inner_op, "&&");
-    }
-
-    #[test]
-    fn precedence_triple_level_chain() {
-        // a > b && c < d || e == f
-        // Expected: BinOp(BinOp(BinOp(a,>,b), &&, BinOp(c,<,d)), ||, BinOp(e,==,f))
-        let program = parse("x >> filter(a > b && c < d || e == f)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(top_op, "||");
-    }
-
-    #[test]
-    fn precedence_arithmetic_then_comparison_then_logical() {
-        // a + b > c && d → BinOp(BinOp(BinOp(a,+,b), >, c), &&, d)
-        let program = parse("x >> filter(a + b > c && d)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(top_op, "&&");
-    }
-
-    // ── Complex Expression Parsing ───────────────────────────────────────
-
-    #[test]
-    fn parses_deeply_nested_member_access() {
-        let program = parse("a.b.c.d.e >> out").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
-            panic!("expected member access source");
-        };
-        assert_eq!(parts, &["a", "b", "c", "d", "e"]);
-    }
-
-    #[test]
-    fn parses_unary_not_on_member_access() {
-        let program = parse("x >> filter(!event.active)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
-            panic!("expected unary");
-        };
-        assert_eq!(op, "!");
-        assert!(matches!(inner.as_ref(), Expression::MemberAccess(_)));
-    }
-
-    #[test]
-    fn parses_unary_not_on_function_call() {
-        let program = parse("x >> filter(!is_valid(x))").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
-            panic!("expected unary");
-        };
-        assert_eq!(op, "!");
-        assert!(matches!(inner.as_ref(), Expression::FunctionCall(_)));
-    }
-
-    #[test]
-    fn parses_lambda_with_compound_condition() {
-        // row >> row.id != null && row.price > 0
-        let src = r#""data.csv" >> @filter(row >> row.id != null && row.price > 0) >> "out.csv""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
-            panic!("expected directive");
-        };
-        let Some(Expression::Lambda(lambda)) = dir.arguments.first() else {
-            panic!("expected lambda");
-        };
-        assert_eq!(lambda.param, "row");
-        // Top-level operator should be && after precedence fix
-        let Expression::BinaryOp(_, top_op, _) = lambda.body.as_ref() else {
-            panic!("expected binop");
-        };
-        assert_eq!(top_op, "&&");
-    }
-
-    #[test]
-    fn parses_nested_function_calls_in_expression() {
-        let program = parse("x >> filter(outer(inner(x)))").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::FunctionCall(outer) = &call.arguments[0] else {
-            panic!("expected outer call");
-        };
-        assert_eq!(outer.name, "outer");
-        let Expression::FunctionCall(inner) = &outer.arguments[0] else {
-            panic!("expected inner call");
-        };
-        assert_eq!(inner.name, "inner");
-    }
-
-    #[test]
-    fn parses_boolean_literals_as_function_args() {
-        let program = parse("x >> func(true, false)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        assert_eq!(call.arguments.len(), 2);
-        assert!(matches!(
-            &call.arguments[0],
-            Expression::Literal(Literal::Boolean(true))
-        ));
-        assert!(matches!(
-            &call.arguments[1],
-            Expression::Literal(Literal::Boolean(false))
-        ));
-    }
-
-    #[test]
-    fn parses_negative_number() {
-        let program = parse("-42.5 >> out").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let Source::Expression(Expression::Literal(Literal::Number(n))) = &flow.source else {
-            panic!("expected number literal source");
-        };
-        assert_eq!(*n, -42.5);
-    }
-
-    #[test]
-    fn parses_string_concatenation_expression() {
-        let program = parse(r#"x >> filter(\"hello" + \" world")"#).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
-            panic!("expected call");
-        };
-        let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
-            panic!("expected binop");
-        };
-        assert_eq!(op, "+");
-        assert!(matches!(left.as_ref(), Expression::Literal(Literal::String(s)) if s == "hello"));
-        assert!(matches!(right.as_ref(), Expression::Literal(Literal::String(s)) if s == " world"));
-    }
-
-    // ── Import Parsing ───────────────────────────────────────────────────
-
-    #[test]
-    fn parses_import_without_alias() {
-        let program = parse(r#"@import "utils""#).expect("parse should succeed");
-        let Statement::Import(import) = &program.statements[0] else {
-            panic!("expected import");
-        };
-        assert_eq!(import.path, "utils");
-        assert_eq!(import.alias, None);
-    }
-
-    #[test]
-    fn parses_import_with_dotted_path_and_alias() {
-        let program = parse(r#"@import "std.csv" as csv"#).expect("parse should succeed");
-        let Statement::Import(import) = &program.statements[0] else {
-            panic!("expected import");
-        };
-        assert_eq!(import.path, "std.csv");
-        assert_eq!(import.alias, Some("csv".to_string()));
-    }
-
-    #[test]
-    fn parses_multiple_imports() {
-        let src = r#"
-            @import "std.csv" as csv
-            @import "std.out" as stdout
-            @import "logic" as util
-        "#;
-        let program = parse(src).expect("parse should succeed");
-        assert_eq!(program.statements.len(), 3);
-        assert!(
-            program
-                .statements
-                .iter()
-                .all(|s| matches!(s, Statement::Import(_)))
-        );
-    }
-
-    // ── Function Definition Edge Cases ───────────────────────────────────
-
-    #[test]
-    fn parses_zero_parameter_function() {
-        let program = parse(r#"greet() => \"hello" >> output"#).expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else {
-            panic!("expected function");
-        };
-        assert_eq!(func.name, "greet");
-        assert!(func.parameters.is_empty());
-    }
-
-    #[test]
-    fn parses_multi_parameter_function() {
-        let program = parse("add(a, b, c) => a").expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else {
-            panic!("expected function");
-        };
-        assert_eq!(func.name, "add");
-        assert_eq!(func.parameters, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn parses_function_body_as_branch() {
-        let src = r#"handler(x) => [x >> "out1.txt", x >> "out2.txt"]"#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else {
-            panic!("expected function");
-        };
-        assert_eq!(func.name, "handler");
-        assert!(matches!(func.body, FlowOrBranch::Branch(_)));
-    }
-
-    #[test]
-    fn parses_function_with_binary_expr_body() {
-        let program = parse("is_valid(row) => row.id != null && row.price > 0")
+#[test]
+fn parses_filter_lambda_with_comparison_operator() {
+    let program =
+        parse("\"customers.csv\" >> csv.parse >> @filter(row >> row.Index > 90) >> \"high.txt\"")
             .expect("parse should succeed");
-        let Statement::Function(func) = &program.statements[0] else {
-            panic!("expected function");
-        };
-        assert_eq!(func.name, "is_valid");
-        assert_eq!(func.parameters, vec!["row"]);
-        // Body should be a Flow whose source is a binary expression
-        let FlowOrBranch::Flow(flow) = &func.body else {
-            panic!("expected flow body");
-        };
-        assert!(matches!(
-            &flow.source,
-            Source::Expression(Expression::BinaryOp(_, _, _))
-        ));
-    }
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    assert_eq!(flow.operations.len(), 3);
+    let (_, Destination::Directive(filter)) = &flow.operations[1] else {
+        panic!("expected filter directive destination");
+    };
+    let Some(Expression::Lambda(lambda)) = filter.arguments.first() else {
+        panic!("expected lambda argument for filter");
+    };
+    let Expression::BinaryOp(_, op, _) = lambda.body.as_ref() else {
+        panic!("expected binary expression in filter lambda");
+    };
+    assert_eq!(op, ">");
+}
 
-    // ── Pipe Flow Edge Cases ─────────────────────────────────────────────
+#[test]
+fn parses_filter_lambda_with_logical_and_operator() {
+    let program = parse("\"customers.csv\" >> csv.parse >> @filter(row >> 1 && 2) >> \"high.txt\"")
+        .expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    let (_, Destination::Directive(filter)) = &flow.operations[1] else {
+        panic!("expected filter directive destination");
+    };
+    let Some(Expression::Lambda(lambda)) = filter.arguments.first() else {
+        panic!("expected lambda argument for filter");
+    };
+    let Expression::BinaryOp(_, op, _) = lambda.body.as_ref() else {
+        panic!("expected binary expression in filter lambda");
+    };
+    assert_eq!(op, "&&");
+}
 
-    #[test]
-    fn parses_chained_pipes() {
-        let program = parse("a >> b >> c >> d").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert_eq!(flow.operations.len(), 3);
-        assert!(flow.operations.iter().all(|(op, _)| *op == PipeOp::Safe));
-    }
-
-    #[test]
-    fn parses_mixed_pipe_operators() {
-        let src = r#"a >> "b.txt" >>> "c.txt" -> "d/""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert_eq!(flow.operations.len(), 3);
-        assert_eq!(flow.operations[0].0, PipeOp::Safe);
-        assert_eq!(flow.operations[1].0, PipeOp::Force);
-        assert_eq!(flow.operations[2].0, PipeOp::Move);
-    }
-
-    #[test]
-    fn parses_empty_branch() {
-        let program = parse("x >> []").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Branch(branch)) = &flow.operations[0] else {
-            panic!("expected branch");
-        };
-        assert!(branch.items.is_empty());
-    }
-
-    #[test]
-    fn parses_nested_branches() {
-        let src = r#"x >> [a >> [b, c], d >> "out.txt"]"#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Branch(outer)) = &flow.operations[0] else {
-            panic!("expected outer branch");
-        };
-        assert_eq!(outer.items.len(), 2);
-        // First flow's destination should be a nested branch
-        let BranchItem::Flow(first_flow) = &outer.items[0] else {
-            panic!("expected first branch item to be a flow");
-        };
-        let (_, Destination::Branch(inner)) = &first_flow.operations[0] else {
-            panic!("expected inner branch");
-        };
-        assert_eq!(inner.items.len(), 2);
-    }
-
-    #[test]
-    fn parses_on_fail_without_alias() {
-        let src = r#"x >> y on_fail >> "error.log""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert!(flow.on_fail.is_some());
-        let on_fail = flow.on_fail.as_ref().unwrap();
-        assert_eq!(on_fail.alias, None);
-    }
-
-    #[test]
-    fn parses_on_fail_with_alias_and_branch() {
-        let src = r#"x >> y on_fail as e >> [e >> "log.txt"]"#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert!(flow.on_fail.is_some());
-        let on_fail = flow.on_fail.as_ref().unwrap();
-        assert_eq!(on_fail.alias, Some("e".to_string()));
-        assert!(matches!(on_fail.handler.as_ref(), FlowOrBranch::Branch(_)));
-    }
-
-    #[test]
-    fn parses_force_pipe_operator() {
-        let src = r#""input.txt" >>> "output.txt""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert_eq!(flow.operations[0].0, PipeOp::Force);
-    }
-
-    #[test]
-    fn parses_move_pipe_operator() {
-        let src = r#""input.txt" -> "archive/""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        assert_eq!(flow.operations[0].0, PipeOp::Move);
-    }
-
-    // ── Directive Edge Cases ─────────────────────────────────────────────
-
-    #[test]
-    fn parses_directive_with_no_args_and_alias() {
-        let src = r#"x >> @atomic as txn >> "out.txt""#;
-        let program = parse(src).expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
-            panic!("expected directive");
-        };
-        assert_eq!(dir.name, "atomic");
-        assert!(dir.arguments.is_empty());
-        assert_eq!(dir.alias, Some("txn".to_string()));
-    }
-
-    #[test]
-    fn parses_directive_with_multiple_args() {
-        let program = parse("x >> @resize(800, 600)").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
-            panic!("expected directive");
-        };
-        assert_eq!(dir.name, "resize");
-        assert_eq!(dir.arguments.len(), 2);
-        assert!(
-            matches!(&dir.arguments[0], Expression::Literal(Literal::Number(n)) if *n == 800.0)
+#[test]
+fn parses_read_then_csv_parse_in_branch() {
+    let src = r#"x >> [
+        @read(event.file.path) >> @csv.parse as data >> [
+            stdout
+        ]
+    ]"#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe statement");
+    };
+    // x >> [branch]
+    assert_eq!(flow.operations.len(), 1);
+    let (_, Destination::Branch(branch)) = &flow.operations[0] else {
+        panic!("expected branch destination");
+    };
+    // Inside the branch: @read(event.file.path) >> @csv.parse as data >> [...]
+    let inner_item = &branch.items[0];
+    let BranchItem::Flow(inner_flow) = inner_item else {
+        panic!("expected flow in branch item");
+    };
+    let Source::Directive(read_dir) = &inner_flow.source else {
+        panic!(
+            "expected @read directive as source, got {:?}",
+            inner_flow.source
         );
-        assert!(
-            matches!(&dir.arguments[1], Expression::Literal(Literal::Number(n)) if *n == 600.0)
+    };
+    assert_eq!(read_dir.name, "read");
+    // Should have 2 operations: >> @csv.parse as data, >> [...]
+    assert_eq!(
+        inner_flow.operations.len(),
+        2,
+        "expected 2 operations, got: {:?}",
+        inner_flow.operations
+    );
+    let (_, Destination::Directive(csv_dir)) = &inner_flow.operations[0] else {
+        panic!(
+            "expected @csv.parse directive destination, got: {:?}",
+            inner_flow.operations[0]
         );
-    }
+    };
+    assert_eq!(csv_dir.name, "csv.parse");
+    assert_eq!(csv_dir.alias, Some("data".to_string()));
+}
 
-    #[test]
-    fn parses_qualified_directive_with_alias() {
-        let program = parse("x >> @csv.parse as data").expect("parse should succeed");
-        let Statement::Pipe(flow) = &program.statements[0] else {
-            panic!("expected pipe");
-        };
-        let (_, Destination::Directive(dir)) = &flow.operations[0] else {
-            panic!("expected directive");
-        };
-        assert_eq!(dir.name, "csv.parse");
-        assert_eq!(dir.alias, Some("data".to_string()));
-    }
+// ── Operator Precedence ──────────────────────────────────────────────
 
-    // ── Error Cases (should fail parsing) ────────────────────────────────
+#[test]
+fn precedence_multiply_binds_tighter_than_add() {
+    // a + b * c should become BinOp(a, +, BinOp(b, *, c))
+    let program = parse("x >> filter(a + b * c)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(op, "+");
+    assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
+    let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
+        panic!("expected inner binop");
+    };
+    assert_eq!(inner_op, "*");
+}
 
-    #[test]
-    fn rejects_unclosed_bracket() {
-        let result = parse("x >> [");
-        assert!(result.is_err(), "should reject unclosed bracket");
-    }
+#[test]
+fn precedence_equality_binds_tighter_than_logical_and() {
+    // a == b && c == d → BinOp(BinOp(a,==,b), &&, BinOp(c,==,d))
+    let program = parse("x >> filter(a == b && c == d)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(op, "&&");
+    let Expression::BinaryOp(_, left_op, _) = left.as_ref() else {
+        panic!("expected left binop");
+    };
+    assert_eq!(left_op, "==");
+    let Expression::BinaryOp(_, right_op, _) = right.as_ref() else {
+        panic!("expected right binop");
+    };
+    assert_eq!(right_op, "==");
+}
 
-    #[test]
-    fn rejects_bare_directive_without_name() {
-        let result = parse("x >> @");
-        assert!(
-            result.is_err(),
-            "should reject bare @ without directive name"
-        );
-    }
+#[test]
+fn precedence_and_binds_tighter_than_or() {
+    // a || b && c → BinOp(a, ||, BinOp(b, &&, c))
+    let program = parse("x >> filter(a || b && c)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(op, "||");
+    assert!(matches!(left.as_ref(), Expression::Identifier(n) if n == "a"));
+    let Expression::BinaryOp(_, inner_op, _) = right.as_ref() else {
+        panic!("expected inner binop");
+    };
+    assert_eq!(inner_op, "&&");
+}
 
-    #[test]
-    fn rejects_empty_program_content_in_statement() {
-        // Double pipe with nothing in between
-        let result = parse(">> >>");
-        assert!(result.is_err(), "should reject invalid pipe without source");
-    }
+#[test]
+fn precedence_triple_level_chain() {
+    // a > b && c < d || e == f
+    // Expected: BinOp(BinOp(BinOp(a,>,b), &&, BinOp(c,<,d)), ||, BinOp(e,==,f))
+    let program = parse("x >> filter(a > b && c < d || e == f)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(top_op, "||");
+}
 
-    // ── Mixed Programs ──────────────────────────────────────────────────
+#[test]
+fn precedence_arithmetic_then_comparison_then_logical() {
+    // a + b > c && d → BinOp(BinOp(BinOp(a,+,b), >, c), &&, d)
+    let program = parse("x >> filter(a + b > c && d)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(_, top_op, _) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(top_op, "&&");
+}
 
-    #[test]
-    fn parses_full_program_with_imports_functions_and_flows() {
-        let src = r#"
-            @import "std.csv" as csv
-            @import "logic" as util
+// ── Complex Expression Parsing ───────────────────────────────────────
 
-            is_valid(row) => row.id != null
+#[test]
+fn parses_deeply_nested_member_access() {
+    let program = parse("a.b.c.d.e >> out").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let Source::Expression(Expression::MemberAccess(parts)) = &flow.source else {
+        panic!("expected member access source");
+    };
+    assert_eq!(parts, &["a", "b", "c", "d", "e"]);
+}
 
-            @watch("./inbox/") as event >> [
-                filter(event.file.ext == "csv") >> @read(event.file.path) >> @csv.parse as data >> [
-                    data >> "output.csv"
-                ]
-            ] on_fail as err >> [
-                err >> "error.log"
+#[test]
+fn parses_unary_not_on_member_access() {
+    let program = parse("x >> filter(!event.active)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
+        panic!("expected unary");
+    };
+    assert_eq!(op, "!");
+    assert!(matches!(inner.as_ref(), Expression::MemberAccess(_)));
+}
+
+#[test]
+fn parses_unary_not_on_function_call() {
+    let program = parse("x >> filter(!is_valid(x))").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::UnaryOp(op, inner) = &call.arguments[0] else {
+        panic!("expected unary");
+    };
+    assert_eq!(op, "!");
+    assert!(matches!(inner.as_ref(), Expression::FunctionCall(_)));
+}
+
+#[test]
+fn parses_lambda_with_compound_condition() {
+    // row >> row.id != null && row.price > 0
+    let src = r#""data.csv" >> @filter(row >> row.id != null && row.price > 0) >> "out.csv""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+        panic!("expected directive");
+    };
+    let Some(Expression::Lambda(lambda)) = dir.arguments.first() else {
+        panic!("expected lambda");
+    };
+    assert_eq!(lambda.param, "row");
+    // Top-level operator should be && after precedence fix
+    let Expression::BinaryOp(_, top_op, _) = lambda.body.as_ref() else {
+        panic!("expected binop");
+    };
+    assert_eq!(top_op, "&&");
+}
+
+#[test]
+fn parses_nested_function_calls_in_expression() {
+    let program = parse("x >> filter(outer(inner(x)))").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::FunctionCall(outer) = &call.arguments[0] else {
+        panic!("expected outer call");
+    };
+    assert_eq!(outer.name, "outer");
+    let Expression::FunctionCall(inner) = &outer.arguments[0] else {
+        panic!("expected inner call");
+    };
+    assert_eq!(inner.name, "inner");
+}
+
+#[test]
+fn parses_boolean_literals_as_function_args() {
+    let program = parse("x >> func(true, false)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    assert_eq!(call.arguments.len(), 2);
+    assert!(matches!(
+        &call.arguments[0],
+        Expression::Literal(Literal::Boolean(true))
+    ));
+    assert!(matches!(
+        &call.arguments[1],
+        Expression::Literal(Literal::Boolean(false))
+    ));
+}
+
+#[test]
+fn parses_negative_number() {
+    let program = parse("-42.5 >> out").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let Source::Expression(Expression::Literal(Literal::Number(n))) = &flow.source else {
+        panic!("expected number literal source");
+    };
+    assert_eq!(*n, -42.5);
+}
+
+#[test]
+fn parses_string_concatenation_expression() {
+    let program = parse(r#"x >> filter(\"hello" + \" world")"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected call");
+    };
+    let Expression::BinaryOp(left, op, right) = &call.arguments[0] else {
+        panic!("expected binop");
+    };
+    assert_eq!(op, "+");
+    assert!(matches!(left.as_ref(), Expression::Literal(Literal::String(s)) if s == "hello"));
+    assert!(matches!(right.as_ref(), Expression::Literal(Literal::String(s)) if s == " world"));
+}
+
+// ── Import Parsing ───────────────────────────────────────────────────
+
+#[test]
+fn parses_import_without_alias() {
+    let program = parse(r#"@import "utils""#).expect("parse should succeed");
+    let Statement::Import(import) = &program.statements[0] else {
+        panic!("expected import");
+    };
+    assert_eq!(import.path, "utils");
+    assert_eq!(import.alias, None);
+}
+
+#[test]
+fn parses_import_with_dotted_path_and_alias() {
+    let program = parse(r#"@import "std.csv" as csv"#).expect("parse should succeed");
+    let Statement::Import(import) = &program.statements[0] else {
+        panic!("expected import");
+    };
+    assert_eq!(import.path, "std.csv");
+    assert_eq!(import.alias, Some("csv".to_string()));
+}
+
+#[test]
+fn parses_multiple_imports() {
+    let src = r#"
+        @import "std.csv" as csv
+        @import "std.out" as stdout
+        @import "logic" as util
+    "#;
+    let program = parse(src).expect("parse should succeed");
+    assert_eq!(program.statements.len(), 3);
+    assert!(
+        program
+            .statements
+            .iter()
+            .all(|s| matches!(s, Statement::Import(_)))
+    );
+}
+
+// ── Function Definition Edge Cases ───────────────────────────────────
+
+#[test]
+fn parses_zero_parameter_function() {
+    let program = parse(r#"greet() => \"hello" >> output"#).expect("parse should succeed");
+    let Statement::Function(func) = &program.statements[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(func.name, "greet");
+    assert!(func.parameters.is_empty());
+}
+
+#[test]
+fn parses_multi_parameter_function() {
+    let program = parse("add(a, b, c) => a").expect("parse should succeed");
+    let Statement::Function(func) = &program.statements[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(func.name, "add");
+    assert_eq!(func.parameters, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn parses_function_body_as_branch() {
+    let src = r#"handler(x) => [x >> "out1.txt", x >> "out2.txt"]"#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Function(func) = &program.statements[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(func.name, "handler");
+    assert!(matches!(func.body, FlowOrBranch::Branch(_)));
+}
+
+#[test]
+fn parses_function_with_binary_expr_body() {
+    let program =
+        parse("is_valid(row) => row.id != null && row.price > 0").expect("parse should succeed");
+    let Statement::Function(func) = &program.statements[0] else {
+        panic!("expected function");
+    };
+    assert_eq!(func.name, "is_valid");
+    assert_eq!(func.parameters, vec!["row"]);
+    // Body should be a Flow whose source is a binary expression
+    let FlowOrBranch::Flow(flow) = &func.body else {
+        panic!("expected flow body");
+    };
+    assert!(matches!(
+        &flow.source,
+        Source::Expression(Expression::BinaryOp(_, _, _))
+    ));
+}
+
+// ── Pipe Flow Edge Cases ─────────────────────────────────────────────
+
+#[test]
+fn parses_chained_pipes() {
+    let program = parse("a >> b >> c >> d").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert_eq!(flow.operations.len(), 3);
+    assert!(flow.operations.iter().all(|(op, _)| *op == PipeOp::Safe));
+}
+
+#[test]
+fn parses_mixed_pipe_operators() {
+    let src = r#"a >> "b.txt" >>> "c.txt" -> "d/""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert_eq!(flow.operations.len(), 3);
+    assert_eq!(flow.operations[0].0, PipeOp::Safe);
+    assert_eq!(flow.operations[1].0, PipeOp::Force);
+    assert_eq!(flow.operations[2].0, PipeOp::Move);
+}
+
+#[test]
+fn parses_empty_branch() {
+    let program = parse("x >> []").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Branch(branch)) = &flow.operations[0] else {
+        panic!("expected branch");
+    };
+    assert!(branch.items.is_empty());
+}
+
+#[test]
+fn parses_nested_branches() {
+    let src = r#"x >> [a >> [b, c], d >> "out.txt"]"#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Branch(outer)) = &flow.operations[0] else {
+        panic!("expected outer branch");
+    };
+    assert_eq!(outer.items.len(), 2);
+    // First flow's destination should be a nested branch
+    let BranchItem::Flow(first_flow) = &outer.items[0] else {
+        panic!("expected first branch item to be a flow");
+    };
+    let (_, Destination::Branch(inner)) = &first_flow.operations[0] else {
+        panic!("expected inner branch");
+    };
+    assert_eq!(inner.items.len(), 2);
+}
+
+#[test]
+fn parses_on_fail_without_alias() {
+    let src = r#"x >> y on_fail >> "error.log""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert!(flow.on_fail.is_some());
+    let on_fail = flow.on_fail.as_ref().unwrap();
+    assert_eq!(on_fail.alias, None);
+}
+
+#[test]
+fn parses_on_fail_with_alias_and_branch() {
+    let src = r#"x >> y on_fail as e >> [e >> "log.txt"]"#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert!(flow.on_fail.is_some());
+    let on_fail = flow.on_fail.as_ref().unwrap();
+    assert_eq!(on_fail.alias, Some("e".to_string()));
+    assert!(matches!(on_fail.handler.as_ref(), FlowOrBranch::Branch(_)));
+}
+
+#[test]
+fn parses_force_pipe_operator() {
+    let src = r#""input.txt" >>> "output.txt""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert_eq!(flow.operations[0].0, PipeOp::Force);
+}
+
+#[test]
+fn parses_move_pipe_operator() {
+    let src = r#""input.txt" -> "archive/""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    assert_eq!(flow.operations[0].0, PipeOp::Move);
+}
+
+// ── Directive Edge Cases ─────────────────────────────────────────────
+
+#[test]
+fn parses_directive_with_no_args_and_alias() {
+    let src = r#"x >> @atomic as txn >> "out.txt""#;
+    let program = parse(src).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+        panic!("expected directive");
+    };
+    assert_eq!(dir.name, "atomic");
+    assert!(dir.arguments.is_empty());
+    assert_eq!(dir.alias, Some("txn".to_string()));
+}
+
+#[test]
+fn parses_directive_with_multiple_args() {
+    let program = parse("x >> @resize(800, 600)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+        panic!("expected directive");
+    };
+    assert_eq!(dir.name, "resize");
+    assert_eq!(dir.arguments.len(), 2);
+    assert!(matches!(&dir.arguments[0], Expression::Literal(Literal::Number(n)) if *n == 800.0));
+    assert!(matches!(&dir.arguments[1], Expression::Literal(Literal::Number(n)) if *n == 600.0));
+}
+
+#[test]
+fn parses_qualified_directive_with_alias() {
+    let program = parse("x >> @csv.parse as data").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+        panic!("expected directive");
+    };
+    assert_eq!(dir.name, "csv.parse");
+    assert_eq!(dir.alias, Some("data".to_string()));
+}
+
+#[test]
+fn parses_directive_with_named_arguments_and_object_literal() {
+    let program = parse(
+        r#"data >> @http.post(url: "http://127.0.0.1:8123/api", headers: { "Authorization": "Bearer x" })"#,
+    )
+    .expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Directive(dir)) = &flow.operations[0] else {
+        panic!("expected directive");
+    };
+    assert_eq!(dir.name, "http.post");
+    assert_eq!(dir.named_arguments.len(), 2);
+    assert_eq!(dir.named_arguments[0].name, "url");
+    assert_eq!(dir.named_arguments[1].name, "headers");
+    assert!(matches!(
+        dir.named_arguments[1].value,
+        Expression::ObjectLiteral(_)
+    ));
+}
+
+#[test]
+fn parses_mixed_positional_and_named_function_arguments() {
+    let program = parse("x >> fn_call(1, mode: true)").expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected function call");
+    };
+    assert_eq!(call.arguments.len(), 1);
+    assert_eq!(call.named_arguments.len(), 1);
+    assert_eq!(call.named_arguments[0].name, "mode");
+}
+
+#[test]
+fn parses_secret_expression_in_string_concat() {
+    let program = parse(r#"data >> \"hello: " + @secret(\"NAME")"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::Expression(Expression::BinaryOp(_, op, right))) = &flow.operations[0]
+    else {
+        panic!("expected binary destination expression");
+    };
+    assert_eq!(op, "+");
+    assert!(matches!(right.as_ref(), Expression::SecretCall(_)));
+}
+
+#[test]
+fn parses_secret_expression_in_object_literal() {
+    let program =
+        parse(r#"x >> fn_call({ "token": @secret(\"API_TOKEN") })"#).expect("parse should succeed");
+    let Statement::Pipe(flow) = &program.statements[0] else {
+        panic!("expected pipe");
+    };
+    let (_, Destination::FunctionCall(call)) = &flow.operations[0] else {
+        panic!("expected function call");
+    };
+    let Expression::ObjectLiteral(entries) = &call.arguments[0] else {
+        panic!("expected object literal");
+    };
+    assert!(matches!(entries[0].1, Expression::SecretCall(_)));
+}
+
+#[test]
+fn rejects_secret_expression_without_argument() {
+    let result = parse(r#"x >> \"prefix: " + @secret()"#);
+    assert!(result.is_err(), "should reject @secret() without argument");
+}
+
+#[test]
+fn rejects_secret_expression_with_multiple_arguments() {
+    let result = parse(r#"x >> \"prefix: " + @secret(\"A", \"B")"#);
+    assert!(result.is_err(), "should reject @secret with multiple args");
+}
+
+// ── Error Cases (should fail parsing) ────────────────────────────────
+
+#[test]
+fn rejects_unclosed_bracket() {
+    let result = parse("x >> [");
+    assert!(result.is_err(), "should reject unclosed bracket");
+}
+
+#[test]
+fn rejects_bare_directive_without_name() {
+    let result = parse("x >> @");
+    assert!(
+        result.is_err(),
+        "should reject bare @ without directive name"
+    );
+}
+
+#[test]
+fn rejects_empty_program_content_in_statement() {
+    // Double pipe with nothing in between
+    let result = parse(">> >>");
+    assert!(result.is_err(), "should reject invalid pipe without source");
+}
+
+// ── Mixed Programs ──────────────────────────────────────────────────
+
+#[test]
+fn parses_full_program_with_imports_functions_and_flows() {
+    let src = r#"
+        @import "std.csv" as csv
+        @import "logic" as util
+
+        is_valid(row) => row.id != null
+
+        @watch("./inbox/") as event >> [
+            filter(event.file.ext == "csv") >> @read(event.file.path) >> @csv.parse as data >> [
+                data >> "output.csv"
             ]
-        "#;
-        let program = parse(src).expect("parse should succeed");
-        assert_eq!(program.statements.len(), 4); // 2 imports + 1 function + 1 pipe
-        assert!(matches!(&program.statements[0], Statement::Import(_)));
-        assert!(matches!(&program.statements[1], Statement::Import(_)));
-        assert!(matches!(&program.statements[2], Statement::Function(_)));
-        assert!(matches!(&program.statements[3], Statement::Pipe(_)));
-    }
+        ] on_fail as err >> [
+            err >> "error.log"
+        ]
+    "#;
+    let program = parse(src).expect("parse should succeed");
+    assert_eq!(program.statements.len(), 4); // 2 imports + 1 function + 1 pipe
+    assert!(matches!(&program.statements[0], Statement::Import(_)));
+    assert!(matches!(&program.statements[1], Statement::Import(_)));
+    assert!(matches!(&program.statements[2], Statement::Function(_)));
+    assert!(matches!(&program.statements[3], Statement::Pipe(_)));
+}
 
-    #[test]
-    fn parses_comments_are_preserved() {
-        let src = r#"
-            // This is a comment
-            x >> y // inline comment
-        "#;
-        let program = parse(src).expect("parse should succeed");
-        assert_eq!(program.statements.len(), 2);
-    }
+#[test]
+fn parses_comments_are_preserved() {
+    let src = r#"
+        // This is a comment
+        x >> y // inline comment
+    "#;
+    let program = parse(src).expect("parse should succeed");
+    assert_eq!(program.statements.len(), 2);
 }

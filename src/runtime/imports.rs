@@ -165,7 +165,7 @@ impl Runtime {
                     comments: vec![],
                     name: parse_name.clone(),
                     parameters: vec!["input".to_string()],
-                    body: FlowOrBranch::Flow(PipeFlow {
+                    body: FlowOrBranch::Flow(Box::new(PipeFlow {
                         comments: vec![],
                         source: Source::Expression(Expression::Identifier("input".to_string())),
                         operations: vec![(
@@ -173,13 +173,14 @@ impl Runtime {
                             Destination::Directive(DirectiveFlow {
                                 name: "csv.parse".to_string(),
                                 arguments: vec![],
+                                named_arguments: vec![],
                                 alias: None,
                                 span: Span::default(),
                             }),
                         )],
                         on_fail: None,
                         span: Span::default(),
-                    }),
+                    })),
                     span: Span::default(),
                 };
                 exports.insert(
@@ -204,7 +205,7 @@ impl Runtime {
                     comments: vec![],
                     name: sink_name.clone(),
                     parameters: vec!["input".to_string()],
-                    body: FlowOrBranch::Flow(PipeFlow {
+                    body: FlowOrBranch::Flow(Box::new(PipeFlow {
                         comments: vec![],
                         source: Source::Expression(Expression::Identifier("input".to_string())),
                         operations: vec![(
@@ -212,16 +213,23 @@ impl Runtime {
                             Destination::FunctionCall(FunctionCall {
                                 name: "print".to_string(),
                                 arguments: vec![],
+                                named_arguments: vec![],
                                 alias: None,
                                 span: Span::default(),
                             }),
                         )],
                         on_fail: None,
                         span: Span::default(),
-                    }),
+                    })),
                     span: Span::default(),
                 });
                 self.callable_sinks.insert(sink_name.clone());
+                let label = import.alias.clone().unwrap_or_else(|| path_str.clone());
+                debug!("imported standard module: {}", label);
+                Ok(())
+            }
+            "http" => {
+                self.std_modules.insert("http".to_string());
                 let label = import.alias.clone().unwrap_or_else(|| path_str.clone());
                 debug!("imported standard module: {}", label);
                 Ok(())

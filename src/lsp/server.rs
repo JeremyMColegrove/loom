@@ -1,5 +1,5 @@
 use crate::formatter::Formatter;
-use crate::lsp::catalog::{BUILTIN_FUNCTIONS, DIRECTIVES, KEYWORDS};
+use crate::lsp::catalog::{BUILTIN_FUNCTION_DOCS, DIRECTIVES, KEYWORDS};
 use crate::lsp::completion::{
     completion_items_for_trigger, extract_import_prefix, extract_string_literal_prefix,
     file_completion_items, get_signature_context, import_completion_items,
@@ -18,6 +18,43 @@ use tower_lsp::{Client, LanguageServer, LspService, Server};
 pub struct Backend {
     client: Client,
     documents: RwLock<HashMap<String, String>>,
+}
+
+impl Backend {
+    async fn publish_diagnostics_for(&self, uri: Url, text: &str) {
+        let parse_result = parse(text);
+
+        let mut diagnostics = Vec::new();
+        match parse_result {
+            Ok(program) => diagnostics.extend(validate_program(&program)),
+            Err(errors) => {
+                for err in errors {
+                    let pos = Position {
+                        line: err.line.saturating_sub(1) as u32,
+                        character: err.col.saturating_sub(1) as u32,
+                    };
+                    diagnostics.push(Diagnostic {
+                        range: Range {
+                            start: pos,
+                            end: pos,
+                        },
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: None,
+                        code_description: None,
+                        source: Some("loom".to_string()),
+                        message: err.message,
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                    });
+                }
+            }
+        }
+
+        self.client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -64,10 +101,15 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.documents.write().await.insert(
-            params.text_document.uri.to_string(),
-            params.text_document.text.clone(),
-        );
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+
+        self.documents
+            .write()
+            .await
+            .insert(uri.to_string(), text.clone());
+
+        self.publish_diagnostics_for(uri, &text).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -78,38 +120,7 @@ impl LanguageServer for Backend {
                 .write()
                 .await
                 .insert(uri.to_string(), text.clone());
-            let parse_result = parse(text);
-
-            let mut diagnostics = Vec::new();
-            match parse_result {
-                Ok(program) => diagnostics.extend(validate_program(&program)),
-                Err(errors) => {
-                    for err in errors {
-                        let pos = Position {
-                            line: err.line.saturating_sub(1) as u32,
-                            character: err.col.saturating_sub(1) as u32,
-                        };
-                        diagnostics.push(Diagnostic {
-                            range: Range {
-                                start: pos,
-                                end: pos,
-                            },
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            code: None,
-                            code_description: None,
-                            source: Some("loom".to_string()),
-                            message: err.message,
-                            related_information: None,
-                            tags: None,
-                            data: None,
-                        });
-                    }
-                }
-            }
-
-            self.client
-                .publish_diagnostics(uri, diagnostics, None)
-                .await;
+            self.publish_diagnostics_for(uri, text).await;
         }
     }
 
@@ -170,12 +181,15 @@ impl LanguageServer for Backend {
                 }
             }
 
-            for (name, sig, desc) in BUILTIN_FUNCTIONS {
-                if word == *name {
+            for func in BUILTIN_FUNCTION_DOCS {
+                if word == func.name {
                     return Ok(Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
-                            value: format!("**{}**\n\n```loom\n{}\n```\n\n{}", name, sig, desc),
+                            value: format!(
+                                "**{}**\n\n```loom\n{}\n```\n\n{}",
+                                func.name, func.signature, func.description
+                            ),
                         }),
                         range: None,
                     }));
@@ -285,24 +299,28 @@ impl LanguageServer for Backend {
             if let Some((prefix, start_col)) =
                 extract_import_prefix(text, position.line, position.character)
             {
-                return Ok(Some(CompletionResponse::Array(import_completion_items(
-                    &uri,
-                    &prefix,
-                    position.line,
-                    start_col,
-                    position.character,
-                ))));
+                let uri = uri.clone();
+                let line = position.line;
+                let cursor_col = position.character;
+                let labels = tokio::task::spawn_blocking(move || {
+                    import_completion_items(&uri, &prefix, line, start_col, cursor_col)
+                })
+                .await
+                .unwrap_or_default();
+                return Ok(Some(CompletionResponse::Array(labels)));
             }
             if let Some((prefix, start_col)) =
                 extract_string_literal_prefix(text, position.line, position.character)
             {
-                return Ok(Some(CompletionResponse::Array(file_completion_items(
-                    &uri,
-                    &prefix,
-                    position.line,
-                    start_col,
-                    position.character,
-                ))));
+                let uri = uri.clone();
+                let line = position.line;
+                let cursor_col = position.character;
+                let labels = tokio::task::spawn_blocking(move || {
+                    file_completion_items(&uri, &prefix, line, start_col, cursor_col)
+                })
+                .await
+                .unwrap_or_default();
+                return Ok(Some(CompletionResponse::Array(labels)));
             }
         }
 
@@ -349,13 +367,13 @@ impl LanguageServer for Backend {
                 }
             }
 
-            for (func_name, sig, desc) in BUILTIN_FUNCTIONS {
-                if *func_name == stripped_name {
+            for func in BUILTIN_FUNCTION_DOCS {
+                if func.name == stripped_name {
                     let sig_info = SignatureInformation {
-                        label: sig.to_string(),
+                        label: func.signature.to_string(),
                         documentation: Some(Documentation::MarkupContent(MarkupContent {
                             kind: MarkupKind::Markdown,
-                            value: desc.to_string(),
+                            value: func.description.to_string(),
                         })),
                         parameters: None,
                         active_parameter: Some(param_index),

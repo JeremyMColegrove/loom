@@ -17,6 +17,7 @@ async fn call_builtin(
             span: Span::default(),
             name: name.to_string(),
             arguments,
+            named_arguments: vec![],
             alias: None,
         }),
         operations: vec![],
@@ -130,6 +131,7 @@ async fn atomic_rolls_back_file_write_on_failure() {
                     span: Span::default(),
                     name: "atomic".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -145,6 +147,7 @@ async fn atomic_rolls_back_file_write_on_failure() {
                     span: Span::default(),
                     name: "unknown_function".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -174,6 +177,7 @@ async fn user_blueprint_receives_piped_first_argument() {
                     span: Span::default(),
                     name: "greet".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -193,7 +197,7 @@ async fn user_blueprint_receives_piped_first_argument() {
         span: Span::default(),
         name: "greet".to_string(),
         parameters: vec!["x".to_string()],
-        body: FlowOrBranch::Flow(PipeFlow {
+        body: FlowOrBranch::Flow(Box::new(PipeFlow {
             comments: vec![],
             span: Span::default(),
             source: Source::Expression(Expression::BinaryOp(
@@ -203,7 +207,7 @@ async fn user_blueprint_receives_piped_first_argument() {
             )),
             operations: vec![],
             on_fail: None,
-        }),
+        })),
     });
 
     runtime
@@ -213,6 +217,45 @@ async fn user_blueprint_receives_piped_first_argument() {
 
     let output = std::fs::read_to_string(&output_path).expect("should read output");
     assert!(output.contains("hi there"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn identifier_destination_invokes_user_function_shorthand() {
+    let flow = PipeFlow {
+        comments: vec![],
+        span: Span::default(),
+        source: Source::Expression(Expression::Literal(Literal::String("hi".to_string()))),
+        operations: vec![(
+            PipeOp::Safe,
+            Destination::Expression(Expression::Identifier("add_bang".to_string())),
+        )],
+        on_fail: None,
+    };
+
+    let mut runtime = trusted_runtime();
+    runtime.env.register_function(FunctionDef {
+        comments: vec![],
+        span: Span::default(),
+        name: "add_bang".to_string(),
+        parameters: vec!["x".to_string()],
+        body: FlowOrBranch::Flow(Box::new(PipeFlow {
+            comments: vec![],
+            span: Span::default(),
+            source: Source::Expression(Expression::BinaryOp(
+                Box::new(Expression::Identifier("x".to_string())),
+                "+".to_string(),
+                Box::new(Expression::Literal(Literal::String("!".to_string()))),
+            )),
+            operations: vec![],
+            on_fail: None,
+        })),
+    });
+
+    let result = runtime
+        .execute_flow(&flow)
+        .await
+        .expect("flow should execute");
+    assert_eq!(result.as_string(), "hi!");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -233,6 +276,7 @@ async fn chunk_directive_rejects_zero_size() {
                 span: Span::default(),
                 name: "chunk".to_string(),
                 arguments: vec![Expression::Literal(Literal::String("0".to_string()))],
+                named_arguments: vec![],
                 alias: None,
             }),
         )],
@@ -310,9 +354,10 @@ async fn full_pipeline_read_parse_filter_write() {
         source: Source::Directive(DirectiveFlow {
             span: Span::default(),
             name: "read".to_string(),
-            arguments: vec![Expression::Literal(Literal::Path(
+            arguments: vec![Expression::Literal(Literal::String(
                 csv_input.to_string_lossy().to_string(),
             ))],
+            named_arguments: vec![],
             alias: None,
         }),
         operations: vec![
@@ -322,6 +367,7 @@ async fn full_pipeline_read_parse_filter_write() {
                     span: Span::default(),
                     name: "csv.parse".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -342,6 +388,7 @@ async fn full_pipeline_read_parse_filter_write() {
                             Box::new(Expression::Literal(Literal::Number(1000.0))),
                         )),
                     })],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -412,6 +459,7 @@ async fn csv_parse_respects_row_limit() {
                 span: Span::default(),
                 name: "csv.parse".to_string(),
                 arguments: vec![],
+                named_arguments: vec![],
                 alias: None,
             }),
         )],
@@ -453,6 +501,7 @@ async fn unknown_parse_directive_fails_deterministically() {
                 span: Span::default(),
                 name: "json.parse".to_string(),
                 arguments: vec![],
+                named_arguments: vec![],
                 alias: None,
             }),
         )],
@@ -504,6 +553,7 @@ async fn force_pipe_preserves_previous_value_on_partial_failure() {
                     span: Span::default(),
                     name: "missing_function".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -544,6 +594,7 @@ async fn atomic_rollback_restores_existing_file_contents() {
                     span: Span::default(),
                     name: "atomic".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -559,6 +610,7 @@ async fn atomic_rollback_restores_existing_file_contents() {
                     span: Span::default(),
                     name: "unknown_function".to_string(),
                     arguments: vec![],
+                    named_arguments: vec![],
                     alias: None,
                 }),
             ),
@@ -589,13 +641,14 @@ async fn on_fail_handler_recovers_from_step_failure() {
                 span: Span::default(),
                 name: "missing_function".to_string(),
                 arguments: vec![],
+                named_arguments: vec![],
                 alias: None,
             }),
         )],
         on_fail: Some(OnFail {
             alias: Some("err".to_string()),
             span: Span::default(),
-            handler: Box::new(FlowOrBranch::Flow(PipeFlow {
+            handler: Box::new(FlowOrBranch::Flow(Box::new(PipeFlow {
                 comments: vec![],
                 span: Span::default(),
                 source: Source::Expression(Expression::Identifier("err".to_string())),
@@ -606,7 +659,7 @@ async fn on_fail_handler_recovers_from_step_failure() {
                     ))),
                 )],
                 on_fail: None,
-            })),
+            }))),
         }),
     };
 
@@ -635,13 +688,14 @@ async fn filter_rejection_does_not_trigger_on_fail_handler() {
                 span: Span::default(),
                 name: "filter".to_string(),
                 arguments: vec![Expression::Literal(Literal::Boolean(false))],
+                named_arguments: vec![],
                 alias: None,
             }),
         )],
         on_fail: Some(OnFail {
             alias: Some("err".to_string()),
             span: Span::default(),
-            handler: Box::new(FlowOrBranch::Flow(PipeFlow {
+            handler: Box::new(FlowOrBranch::Flow(Box::new(PipeFlow {
                 comments: vec![],
                 span: Span::default(),
                 source: Source::Expression(Expression::Literal(Literal::String(
@@ -654,7 +708,7 @@ async fn filter_rejection_does_not_trigger_on_fail_handler() {
                     ))),
                 )],
                 on_fail: None,
-            })),
+            }))),
         }),
     };
 
@@ -669,4 +723,198 @@ async fn filter_rejection_does_not_trigger_on_fail_handler() {
         !marker_path.exists(),
         "on_fail handler should not run on filter rejection"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_post_uses_piped_body_and_writes_response_to_file() {
+    let dir = tempdir().expect("tempdir");
+    let out_path = dir.path().join("response.txt");
+    let url = "mock://api.local/post?echo_body=1".to_string();
+    let source = format!(
+        "@import \"std.http\" as http\n42 >> @http.post(\\\"{}\") >> \"{}\"",
+        url,
+        out_path.to_string_lossy()
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().expect("path"));
+    runtime
+        .set_security_policy(SecurityPolicy::allow_all())
+        .expect("policy");
+    runtime.set_trust_mode(TrustMode::Trusted);
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "42\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_post_named_data_overrides_pipe_and_sends_headers() {
+    let dir = tempdir().expect("tempdir");
+    let out_path = dir.path().join("auth.txt");
+    let url = "mock://api.local/post?echo_header=authorization".to_string();
+    let source = format!(
+        "@import \"std.http\" as http\n100 >> @http.post(url: \\\"{}\", headers: {{ \"Authorization\": \\\"Bearer abc\" }}, data: \\\"override\") >> \"{}\"",
+        url,
+        out_path.to_string_lossy()
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().expect("path"));
+    runtime
+        .set_security_policy(SecurityPolicy::allow_all())
+        .expect("policy");
+    runtime.set_trust_mode(TrustMode::Trusted);
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "Bearer abc\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_post_sets_default_content_type_for_string_body() {
+    let dir = tempdir().expect("tempdir");
+    let out_path = dir.path().join("content_type.txt");
+    let url = "mock://api.local/post?echo_header=content-type".to_string();
+    let source = format!(
+        "@import \"std.http\" as http\n\\\"Hello, World!\" >> @http.post(\\\"{}\") >> \"{}\"",
+        url,
+        out_path.to_string_lossy()
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().expect("path"));
+    runtime
+        .set_security_policy(SecurityPolicy::allow_all())
+        .expect("policy");
+    runtime.set_trust_mode(TrustMode::Trusted);
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "text/plain; charset=utf-8\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_post_requires_std_http_import() {
+    let source = "42 >> @http.post(\\\"mock://api.local/post?echo_body=1\")".to_string();
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime();
+    let err = runtime
+        .execute(&program)
+        .await
+        .expect_err("expected failure");
+    assert!(err.contains("requires @import \"std.http\" as http"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn http_post_respects_network_host_allowlist() {
+    let dir = tempdir().expect("tempdir");
+    let url = "mock://blocked.local/post?echo_body=1".to_string();
+    let source = format!(
+        "@import \"std.http\" as http\n42 >> @http.post(\\\"{}\")",
+        url
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = Runtime::new().with_script_dir(dir.path().to_str().expect("path"));
+    runtime
+        .set_security_policy(SecurityPolicy::restricted().with_network_hosts(vec![]))
+        .expect("policy");
+    runtime.set_trust_mode(TrustMode::Trusted);
+    let err = runtime
+        .execute(&program)
+        .await
+        .expect_err("expected unauthorized host");
+    assert!(err.contains("Unauthorized Network access"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secret_expression_resolves_from_dotenv_file() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(".env"), "NAME=from-dotenv\n").expect("write .env");
+    let out_path = dir.path().join("out.txt");
+    let source = format!(
+        "\\\"hello: \" + @secret(\\\"NAME\") >> \"{}\"",
+        out_path.to_string_lossy()
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime_with_script_dir(dir.path().to_str().expect("path"));
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "hello: from-dotenv\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secret_reads_key_name_from_path_literal_argument() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(".env"), "NAME=from-dotenv\n").expect("write .env");
+    std::fs::write(dir.path().join("secret-key-name.txt"), "NAME").expect("write key file");
+    let out_path = dir.path().join("out.txt");
+    let source = format!(
+        "@secret(\"{}\") >> \"{}\"",
+        dir.path().join("secret-key-name.txt").to_string_lossy(),
+        out_path.to_string_lossy()
+    );
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime_with_script_dir(dir.path().to_str().expect("path"));
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "from-dotenv\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secret_uses_process_env_when_dotenv_key_missing() {
+    let dir = tempdir().expect("tempdir");
+    let out_path = dir.path().join("out.txt");
+    let source = format!("@secret(\\\"PATH\") >> \"{}\"", out_path.to_string_lossy());
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime_with_script_dir(dir.path().to_str().expect("path"));
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    let expected = std::env::var("PATH").expect("PATH should exist");
+    assert_eq!(output, format!("{}\n", expected));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dotenv_value_takes_precedence_over_process_env() {
+    let dir = tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(".env"), "PATH=from-dotenv\n").expect("write .env");
+    let out_path = dir.path().join("out.txt");
+    let source = format!("@secret(\\\"PATH\") >> \"{}\"", out_path.to_string_lossy());
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime_with_script_dir(dir.path().to_str().expect("path"));
+    runtime.execute(&program).await.expect("execute");
+
+    let output = std::fs::read_to_string(out_path).expect("read output");
+    assert_eq!(output, "from-dotenv\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secret_missing_key_returns_runtime_error() {
+    let dir = tempdir().expect("tempdir");
+    let key = format!(
+        "LOOM_MISSING_SECRET_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    );
+    let source = format!("@secret(\\\"{}\")", key);
+    let program = loom::parser::parse(&source).expect("parse");
+
+    let mut runtime = trusted_runtime_with_script_dir(dir.path().to_str().expect("path"));
+    let err = runtime
+        .execute(&program)
+        .await
+        .expect_err("missing secret should fail");
+    assert!(err.contains(&format!("Missing secret '{}'", key)));
 }

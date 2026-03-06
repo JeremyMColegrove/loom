@@ -1,9 +1,15 @@
 @import "std.out" as stdout
 @import "std.csv" as csv
-
-@watch("./inbox/") as event >> filter(ev >> ev.type == "created") >> 
-    @read(event.file.path) >> @csv.parse as data >> @atomic >> [
-        filter(row >> row.price > 500) >> "high_orders.csv",
-        filter(row >> row.price <= 500) >> "low_orders.csv",
-        "all_transactions.csv"
-    ] on_fail as err >> \"Failed to move file" >> "error_logs.txt"
+@import "std.http" as http
+// // create sink
+// @watch("./inbox/") as event >> filter(ev >> ev.type == "created") >>
+//     @read(event.file.path) >> @csv.parse as data >> @atomic >> [
+//         filter(row >> row.price > 500) >> "high_orders.csv",
+//         filter(row >> row.price <= 500) >> "low_orders.csv",
+//         "all_transactions.csv"
+//     ] on_fail as err >> \"Failed to move file" >> "error_logs.txt"
+@http.post(\"http://127.0.0.1:3000", {\"": \"application/json"}) >> stdout
+@secret(\"API_KEY") >> stdout
+\"Hello" >> x >> "Hi.txt"
+12 >> peace >> stdout
+peace >> stdout
