@@ -263,6 +263,7 @@ fn collect_std_modules_from_dir(std_dir: &Path, rel: PathBuf, out: &mut BTreeSet
 fn collect_std_import_candidates(base_dir: &Path, prefix: &str) -> Vec<String> {
     let mut modules = BTreeSet::new();
     modules.insert("std.csv".to_string());
+    modules.insert("std.out".to_string());
 
     for ancestor in base_dir.ancestors() {
         let std_dir = ancestor.join("std");
@@ -528,3 +529,6 @@ pub(crate) fn completion_items_for_trigger(trigger: Option<&str>) -> Vec<Complet
 
     items
 }
+
+
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/lsp_completion_tests.rs"));

@@ -1,10 +1,10 @@
 use crate::ast::*;
 use crate::builtin_spec::{
-    DIRECTIVE_ATOMIC, DIRECTIVE_CHUNK, DIRECTIVE_CSV_PARSE, DIRECTIVE_FILTER, DIRECTIVE_LINES,
-    DIRECTIVE_MAP, DIRECTIVE_READ, DIRECTIVE_WRITE,
+    DIRECTIVE_ATOMIC, DIRECTIVE_CSV_PARSE, DIRECTIVE_FILTER, DIRECTIVE_LINES, DIRECTIVE_MAP,
+    DIRECTIVE_READ, DIRECTIVE_WRITE,
 };
 use crate::runtime::Runtime;
-use crate::runtime::builtins::{extract_read_path, normalize_csv_for_parsing, parse_size_bytes};
+use crate::runtime::builtins::{extract_read_path, normalize_csv_for_parsing};
 use crate::runtime::env::Value;
 use crate::runtime::error::{RuntimeError, RuntimeResult};
 use csv::{ReaderBuilder, Trim};
@@ -115,28 +115,6 @@ impl Runtime {
                     .map(|line| Value::String(line.to_string()))
                     .collect();
                 return Ok(Value::List(lines));
-            }
-
-            if directive.name == DIRECTIVE_CHUNK {
-                let size = args
-                    .first()
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "1mb".to_string());
-                let source = args.get(1).cloned().unwrap_or(pipe_val);
-                let source_path = source
-                    .as_path()
-                    .ok_or_else(|| RuntimeError::message("@chunk expects a file path source"))?
-                    .to_string();
-                let bytes = self.read_bytes_path(&source_path)?;
-                let chunk_size = parse_size_bytes(&size).map_err(RuntimeError::message)?;
-                if chunk_size == 0 {
-                    return Err(RuntimeError::message("Chunk size must be greater than 0"));
-                }
-                let mut chunks = Vec::new();
-                for part in bytes.chunks(chunk_size) {
-                    chunks.push(Value::String(String::from_utf8_lossy(part).to_string()));
-                }
-                return Ok(Value::List(chunks));
             }
 
             if directive.name == DIRECTIVE_CSV_PARSE {

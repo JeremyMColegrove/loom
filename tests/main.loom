@@ -11,7 +11,9 @@
         filter(row >> util.is_valid(row) && row.price > 1000) as data >> [
             stdout,
             // print to screen
-            data >>> "premium_sales.csv",
+            data >>> "premium_sales.csv" on_fail as err >> [
+                \"welp" >> "error_log.txt"
+            ],
             // append to file
             // append string to file
             \"Premium record processed: " >> "activity.log"

@@ -8,7 +8,6 @@ pub struct BuiltinDirectiveSpec {
 
 pub const DIRECTIVE_WATCH: &str = "watch";
 pub const DIRECTIVE_ATOMIC: &str = "atomic";
-pub const DIRECTIVE_CHUNK: &str = "chunk";
 pub const DIRECTIVE_LINES: &str = "lines";
 pub const DIRECTIVE_CSV_PARSE: &str = "csv.parse";
 pub const DIRECTIVE_LOG: &str = "log";
@@ -27,11 +26,6 @@ pub const BUILTIN_DIRECTIVES: &[BuiltinDirectiveSpec] = &[
         name: DIRECTIVE_ATOMIC,
         signature: "@atomic",
         description: "Wraps subsequent operations in a transaction. If any step fails, all changes are rolled back.",
-    },
-    BuiltinDirectiveSpec {
-        name: DIRECTIVE_CHUNK,
-        signature: "@chunk(size, source)",
-        description: "Splits the input into chunks of the given size (e.g. `\"5mb\"`). Returns chunk records.",
     },
     BuiltinDirectiveSpec {
         name: DIRECTIVE_LINES,

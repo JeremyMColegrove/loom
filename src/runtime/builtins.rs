@@ -1,6 +1,6 @@
 use crate::builtin_spec::{
-    DIRECTIVE_ATOMIC, DIRECTIVE_CHUNK, DIRECTIVE_CSV_PARSE, DIRECTIVE_LINES, DIRECTIVE_LOG,
-    DIRECTIVE_READ, DIRECTIVE_WATCH, DIRECTIVE_WRITE,
+    DIRECTIVE_ATOMIC, DIRECTIVE_CSV_PARSE, DIRECTIVE_LINES, DIRECTIVE_LOG, DIRECTIVE_READ,
+    DIRECTIVE_WATCH, DIRECTIVE_WRITE,
 };
 use crate::runtime::env::Value;
 use csv::{ReaderBuilder, Trim};
@@ -75,35 +75,6 @@ impl BuiltinRegistry {
         self.directives.insert(
             DIRECTIVE_ATOMIC.to_string(),
             Arc::new(|_args, pipe_val| Ok(pipe_val)),
-        );
-
-        // @chunk directive — splits data into chunks
-        self.directives.insert(
-            DIRECTIVE_CHUNK.to_string(),
-            Arc::new(|args, pipe_val| {
-                let size = args
-                    .first()
-                    .map(|v| v.as_string())
-                    .unwrap_or_else(|| "1mb".to_string());
-                let source = args.get(1).cloned().unwrap_or(pipe_val);
-                let source_path = source
-                    .as_path()
-                    .ok_or_else(|| "@chunk expects a file path source".to_string())?
-                    .to_string();
-                ensure_file_size_limit(&source_path)?;
-                let bytes = std::fs::read(&source_path)
-                    .map_err(|e| format!("Failed to read '{}': {}", source_path, e))?;
-                let chunk_size = parse_size_bytes(&size)?;
-                if chunk_size == 0 {
-                    return Err("Chunk size must be greater than 0".to_string());
-                }
-
-                let mut chunks = Vec::new();
-                for part in bytes.chunks(chunk_size) {
-                    chunks.push(Value::String(String::from_utf8_lossy(part).to_string()));
-                }
-                Ok(Value::List(chunks))
-            }),
         );
 
         // @lines directive — reads a file line-by-line into a list
@@ -342,25 +313,6 @@ pub(crate) fn extract_read_path(value: &Value) -> Option<String> {
         }
         _ => None,
     }
-}
-
-pub(crate) fn parse_size_bytes(raw: &str) -> Result<usize, String> {
-    let lower = raw.trim().to_ascii_lowercase();
-    let parse_num = |s: &str| {
-        s.parse::<usize>()
-            .map_err(|_| format!("Invalid size: '{}'", raw))
-    };
-
-    if let Some(n) = lower.strip_suffix("kb") {
-        return Ok(parse_num(n.trim())? * 1024);
-    }
-    if let Some(n) = lower.strip_suffix("mb") {
-        return Ok(parse_num(n.trim())? * 1024 * 1024);
-    }
-    if let Some(n) = lower.strip_suffix("gb") {
-        return Ok(parse_num(n.trim())? * 1024 * 1024 * 1024);
-    }
-    parse_num(&lower)
 }
 
 pub(crate) fn normalize_csv_for_parsing(input: &str) -> String {

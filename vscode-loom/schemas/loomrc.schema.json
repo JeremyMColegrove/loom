@@ -23,22 +23,22 @@
     "read_paths": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Allowed root paths for read operations."
+      "description": "Allowed paths for read operations. Entries may be literal roots or glob patterns."
     },
     "write_paths": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Allowed root paths for write operations."
+      "description": "Allowed paths for write operations. Entries may be literal roots or glob patterns."
     },
     "import_paths": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Allowed root paths for @import module loading."
+      "description": "Allowed paths for @import module loading. Entries may be literal roots or glob patterns."
     },
     "watch_paths": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Allowed root paths for @watch roots."
+      "description": "Allowed paths for @watch roots. Entries may be literal roots or glob patterns."
     },
     "deny_globs": {
       "type": "array",

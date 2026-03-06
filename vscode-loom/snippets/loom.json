@@ -134,13 +134,6 @@
     ],
     "description": "Writes the current pipe value to a file."
   },
-  "Chunk": {
-    "prefix": "chunk",
-    "body": [
-      "@chunk(\"${1:5mb}\", ${2:source})"
-    ],
-    "description": "Splits input into chunks of a given size."
-  },
   "Function Definition": {
     "prefix": "fn",
     "body": [

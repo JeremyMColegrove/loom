@@ -47,8 +47,16 @@ pub struct SecurityPolicy {
     pub write_paths: Vec<PathBuf>,
     pub import_paths: Vec<PathBuf>,
     pub watch_paths: Vec<PathBuf>,
+    pub read_path_globs: Vec<String>,
+    pub write_path_globs: Vec<String>,
+    pub import_path_globs: Vec<String>,
+    pub watch_path_globs: Vec<String>,
     pub deny_globs: Vec<String>,
     pub allow_all: bool,
+    read_allow_set: Option<GlobSet>,
+    write_allow_set: Option<GlobSet>,
+    import_allow_set: Option<GlobSet>,
+    watch_allow_set: Option<GlobSet>,
     deny_set: Option<GlobSet>,
 }
 
@@ -65,8 +73,16 @@ impl SecurityPolicy {
             write_paths: vec![],
             import_paths: vec![],
             watch_paths: vec![],
+            read_path_globs: vec![],
+            write_path_globs: vec![],
+            import_path_globs: vec![],
+            watch_path_globs: vec![],
             deny_globs: vec![],
             allow_all: true,
+            read_allow_set: None,
+            write_allow_set: None,
+            import_allow_set: None,
+            watch_allow_set: None,
             deny_set: None,
         }
     }
@@ -77,8 +93,16 @@ impl SecurityPolicy {
             write_paths: vec![],
             import_paths: vec![],
             watch_paths: vec![],
+            read_path_globs: vec![],
+            write_path_globs: vec![],
+            import_path_globs: vec![],
+            watch_path_globs: vec![],
             deny_globs: vec![],
             allow_all: false,
+            read_allow_set: None,
+            write_allow_set: None,
+            import_allow_set: None,
+            watch_allow_set: None,
             deny_set: None,
         }
     }
@@ -89,10 +113,24 @@ impl SecurityPolicy {
         self
     }
 
+    pub fn with_read_path_globs(mut self, globs: Vec<String>) -> RuntimeResult<Self> {
+        self.read_path_globs = globs;
+        self.allow_all = false;
+        self.rebuild_read_allow_set()?;
+        Ok(self)
+    }
+
     pub fn with_write_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.write_paths = paths;
         self.allow_all = false;
         self
+    }
+
+    pub fn with_write_path_globs(mut self, globs: Vec<String>) -> RuntimeResult<Self> {
+        self.write_path_globs = globs;
+        self.allow_all = false;
+        self.rebuild_write_allow_set()?;
+        Ok(self)
     }
 
     pub fn with_import_paths(mut self, paths: Vec<PathBuf>) -> Self {
@@ -101,10 +139,24 @@ impl SecurityPolicy {
         self
     }
 
+    pub fn with_import_path_globs(mut self, globs: Vec<String>) -> RuntimeResult<Self> {
+        self.import_path_globs = globs;
+        self.allow_all = false;
+        self.rebuild_import_allow_set()?;
+        Ok(self)
+    }
+
     pub fn with_watch_paths(mut self, paths: Vec<PathBuf>) -> Self {
         self.watch_paths = paths;
         self.allow_all = false;
         self
+    }
+
+    pub fn with_watch_path_globs(mut self, globs: Vec<String>) -> RuntimeResult<Self> {
+        self.watch_path_globs = globs;
+        self.allow_all = false;
+        self.rebuild_watch_allow_set()?;
+        Ok(self)
     }
 
     pub fn with_deny_globs(mut self, globs: Vec<String>) -> RuntimeResult<Self> {
@@ -114,8 +166,52 @@ impl SecurityPolicy {
     }
 
     pub fn try_finalize(mut self) -> RuntimeResult<Self> {
+        self.rebuild_read_allow_set()?;
+        self.rebuild_write_allow_set()?;
+        self.rebuild_import_allow_set()?;
+        self.rebuild_watch_allow_set()?;
         self.rebuild_deny_set()?;
         Ok(self)
+    }
+
+    fn rebuild_allow_set(
+        globs: &[String],
+        label: &str,
+    ) -> RuntimeResult<Option<GlobSet>> {
+        if globs.is_empty() {
+            return Ok(None);
+        }
+
+        let mut builder = GlobSetBuilder::new();
+        for raw in globs {
+            let glob = Glob::new(raw).map_err(|e| {
+                RuntimeError::message(format!("Invalid {} glob '{}': {}", label, raw, e))
+            })?;
+            builder.add(glob);
+        }
+        Ok(Some(builder.build().map_err(|e| {
+            RuntimeError::message(format!("Failed to compile {} globs: {}", label, e))
+        })?))
+    }
+
+    fn rebuild_read_allow_set(&mut self) -> RuntimeResult<()> {
+        self.read_allow_set = Self::rebuild_allow_set(&self.read_path_globs, "read_paths")?;
+        Ok(())
+    }
+
+    fn rebuild_write_allow_set(&mut self) -> RuntimeResult<()> {
+        self.write_allow_set = Self::rebuild_allow_set(&self.write_path_globs, "write_paths")?;
+        Ok(())
+    }
+
+    fn rebuild_import_allow_set(&mut self) -> RuntimeResult<()> {
+        self.import_allow_set = Self::rebuild_allow_set(&self.import_path_globs, "import_paths")?;
+        Ok(())
+    }
+
+    fn rebuild_watch_allow_set(&mut self) -> RuntimeResult<()> {
+        self.watch_allow_set = Self::rebuild_allow_set(&self.watch_path_globs, "watch_paths")?;
+        Ok(())
     }
 
     fn rebuild_deny_set(&mut self) -> RuntimeResult<()> {
@@ -285,9 +381,10 @@ impl Runtime {
 
         if !self.security_policy.allow_all {
             let allowlist = self.allowlist_for(capability)?;
-            let allowed = allowlist
-                .iter()
-                .any(|root| canonical_path.starts_with(root));
+            let mut allowed = allowlist.iter().any(|root| canonical_path.starts_with(root));
+            if !allowed {
+                allowed = self.capability_glob_allows(capability, &canonical_path);
+            }
             if !allowed {
                 let err = RuntimeError::unauthorized_access(
                     format!("{:?}", capability),
@@ -321,6 +418,31 @@ impl Runtime {
             out.push(self.canonicalize_with_existing_ancestor(raw)?);
         }
         Ok(out)
+    }
+
+    fn path_matches_glob_set(path: &Path, allow_set: Option<&GlobSet>) -> bool {
+        let Some(allow_set) = allow_set else {
+            return false;
+        };
+        let normalized = normalize_for_glob(path);
+        allow_set.is_match(&normalized)
+    }
+
+    fn capability_glob_allows(&self, capability: Capability, path: &Path) -> bool {
+        match capability {
+            Capability::Read => {
+                Self::path_matches_glob_set(path, self.security_policy.read_allow_set.as_ref())
+            }
+            Capability::Write => {
+                Self::path_matches_glob_set(path, self.security_policy.write_allow_set.as_ref())
+            }
+            Capability::Import => {
+                Self::path_matches_glob_set(path, self.security_policy.import_allow_set.as_ref())
+            }
+            Capability::Watch => {
+                Self::path_matches_glob_set(path, self.security_policy.watch_allow_set.as_ref())
+            }
+        }
     }
 
     fn path_is_denied(&self, path: &Path) -> bool {
@@ -419,3 +541,6 @@ fn normalize_for_glob(path: &Path) -> String {
         parts.join("/")
     }
 }
+
+
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/unit/runtime_security_tests.rs"));

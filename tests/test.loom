@@ -1,0 +1,9 @@
+@import "std.out" as stdout
+@import "std.csv" as csv
+
+@watch("./inbox/") as event >> filter(ev >> ev.type == "created") >> 
+    @read(event.file.path) >> @csv.parse as data >> @atomic >> [
+        filter(row >> row.price > 500) >> "high_orders.csv",
+        filter(row >> row.price <= 500) >> "low_orders.csv",
+        "all_transactions.csv"
+    ] on_fail as err >> \"Failed to move file" >> "error_logs.txt"

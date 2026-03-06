@@ -17,11 +17,6 @@ pub(crate) const DIRECTIVES: &[DirectiveInfo] = &[
         description: "Wraps subsequent operations in a transaction. If any step fails, all changes are rolled back.",
     },
     DirectiveInfo {
-        name: "chunk",
-        signature: "@chunk(size, source)",
-        description: "Splits the input into chunks of the given size (e.g. `\"5mb\"`). Returns chunk records.",
-    },
-    DirectiveInfo {
         name: "lines",
         signature: "@lines(path?)",
         description: "Reads a file line-by-line into a list of strings. Uses piped input when no argument is provided.",
@@ -101,12 +96,12 @@ pub(crate) const BUILTIN_FUNCTIONS: &[(&str, &str, &str)] = &[
 ];
 
 pub(crate) const MEMBER_FIELDS: &[(&str, &str)] = &[
-    ("file", "The file path from a watch event or chunk"),
+    ("file", "The file path from a watch event"),
     ("path", "The full path of the resource"),
     ("type", "The type of event (created, modified, deleted)"),
     ("valid", "Whether the record passed validation"),
     ("data", "The data content"),
-    ("size", "The size of the chunk or file"),
+    ("size", "The size of the file"),
     ("source", "The source of the data"),
     ("rows", "Parsed rows from CSV data"),
     ("length", "Length of a string value"),
